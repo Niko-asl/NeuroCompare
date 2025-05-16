@@ -101,7 +101,7 @@ DATA AUGMENTATION: </br>
 * Crop
 * Cutout 
 </br>
-N.B: Increasing the number/probability of augmentation significantly increases runtime
+N.B: Increasing the number/probability of augments <strong> significantly </strong> increases runtime </br>
 </br>
 --no_augmentation : <em> disables ALL augmentation </em> </br>
 --all_augmentation : <em> enables ALL augmentation </em> </br>
