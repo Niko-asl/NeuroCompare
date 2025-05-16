@@ -104,7 +104,7 @@ DATA AUGMENTATION: </br>
 N.B: Increasing the number/probability of augments <strong> significantly </strong> increases runtime </br>
 --no_augmentation : <em> disables ALL augmentation </em> </br>
 --all_augmentation : <em> enables ALL augmentation </em> </br>
---augment : <em> declare desired augmentation(s) from above list </em> </br> </br>
+--augment : <em> declare desired augmentation(s) from above list </em> </br>
 --aug_prob : <em> probability of applying augmentation, default 0.5 </em> </br>
 --rotation_angle : <em> max rotation angle for rotation augment in degrees, default 10 </em> </br>
 --translation_voxels : <em> max translation in voxels for translation augment, default 5 </em> </br>
