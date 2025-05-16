@@ -1,7 +1,7 @@
 # 3D-MRI-ML-Framework-DEMON-
 
 </br>
-<h1> End to end MRI analysis pipeline with 3 networks (currently) </h1> </br>
+<h2> End to end MRI analysis pipeline with 3 networks (currently) </h2> </br>
 1. 3D CNN </br>
 2. 3D Vision Transformer </br>
 3. Hybrid CNN-ViT </br>
