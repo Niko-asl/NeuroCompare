@@ -19,4 +19,10 @@ See below for a comprehensive list
 
 <h2> Framework </h2> </br>
 Once the data is preprocessed, training can be tailored from the command line. </br>
-Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis <strong> without chainging any code </strong> </br>
+Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis <strong> without chainging any code!! </strong> </br>
+
+<h2> Commands and Command line use </h2> </br>
+
+<strong> Preprocessing: </strong> </br>
+--ad_dir <em> Directory containing raw dicom scans of AD patients </em> </br>
+-- control_dir <em> Directory containing raw dicom scans of controls </em> </br>
