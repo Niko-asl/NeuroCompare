@@ -25,4 +25,29 @@ Model size, augmentation, loss function, and many or most hyperparameters can be
 
 <strong> Preprocessing: </strong> </br>
 --ad_dir : <em> Directory containing raw dicom scans of AD patients </em> </br>
--- control_dir : <em> Directory containing raw dicom scans of controls </em> </br>
+--control_dir : <em> Directory containing raw dicom scans of controls </em> </br>
+--output_dir : <em> Directory for output (should default to /home/usr) </em> </br>
+
+<strong> Training </strong> </br>
+DATA CONFIGURATION: <br/>
+--data : <em> directory containing preprocessed data </em> </br>
+--base_dir : <em> specifies root directory if using relative paths (optional, sometimes necessary), default none </em> </br>
+--batch_size : <em> batch size, default 4 </em> </br>
+--balanced_sampling : <em> Use balanced sampling for training batches (recommended), default False </em> </br>
+MODEL ARCHITECTURE: </br>
+--model : <em>Which model architecture to train (currently supports CNN, ViT, or Hybrid), default cnn </em> </br>
+CNN ARCHITECTURE OPTIONS (N.B, THE DEFAULT CNN IS A RESNET):
+--cnn_layers : <em> Depth of CNN network, 2-6 layers currently supported, default 3  </em> </br>
+--cnn_base_filters : <em> number of filters in the first convolutional layer of the CNN (doubles every layer after), default 32 </em> </br>
+--cnn_dropout : <em> dropout rate for CNN, default 0.5 (specification highly recommended) </em> </br>
+ViT ARCHITECTURE OPTIONS: </br>
+--vit_patch_size : <em> patch size for the vision transformer, default 16 </em> </br>
+--vit_depth : <em> number of transformer blocks, default 12 </em> </br>
+--vit_heads : <em> number of attention heads, default 12 </em> </br>
+--vit_embed_dim : <em> embdedding dimension, default 768 </em> </br>
+--vit_mlp_ratio : <em> multilayer perceptron ratio for ViT, default 4 </em> </br>
+--vit_dropout : <em> dropout for ViT </em> </br>
+HYBRID MODEL ARCHITECTURE OPTIONS: (N.B NOT FULLY TESTED) </br>
+--hybrid_feature_dim : <em> feature dimension for hybrid model, default 256 </em> </br>
+--hybrid_transformer_dim : <em> dimension of transformer portion of the hybrid model, default 256 </em> </br>
+
