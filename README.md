@@ -24,5 +24,5 @@ Model size, augmentation, loss function, and many or most hyperparameters can be
 <h2> Commands and Command line use </h2> </br>
 
 <strong> Preprocessing: </strong> </br>
---ad_dir <em> Directory containing raw dicom scans of AD patients </em> </br>
--- control_dir <em> Directory containing raw dicom scans of controls </em> </br>
+--ad_dir    <em> Directory containing raw dicom scans of AD patients </em> </br>
+-- control_dir    <em> Directory containing raw dicom scans of controls </em> </br>
