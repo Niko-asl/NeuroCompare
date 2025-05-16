@@ -19,4 +19,4 @@ See below for a comprehensive list
 
 <h2> Framework </h2> </br>
 Once the data is preprocessed, training can be tailored from the command line. </br>
-Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis __without chainging any code__ </br>
+Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis <strong> without chainging any code </strong> </br>
