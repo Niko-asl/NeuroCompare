@@ -10,7 +10,7 @@ This is an early beta implementation of the 3D end-to-end model comparison frame
 3. Hybrid CNN-ViT </br>
 
 <h2> Preprocessing </h2> </br>
-This framework uses an integrated 4 step preprocessing pipeline </br>(code in preprocessing directory, preprocess_data.py script in scripts dir) </br>
+This framework uses an integrated 4 step preprocessing pipeline </br>(code in preprocessing directory, preprocess_data.py script in scripts dir) </br> </br>
 1. DICOM to NIFTI conversion with dcm2niix </br>
 2. Skull Stripping using HD-BET </br>
 3. Spatial normalization with FSL </br>
@@ -22,8 +22,9 @@ See below for a comprehensive list
 
 <h2> Framework </h2> </br>
 Once the data is preprocessed, training can be tailored from the command line. </br>
-Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis <strong> without chainging any code!! </strong> </br>
-This leads to a lot of arguments being appended, but is still more rapidly flexible than manually recoding stuff. </br>
+Model size, augmentation, loss function, and many or most hyperparameters can be configured on a per run basis <strong> without changing any code!! </strong> </br>
+This leads to a lot of arguments being appended, but is still more rapidly flexible than manually recoding everything. </br>
+Additionally, this maintains a consistent implementation of every modification and counteracts methodological variablility </br>
 N.B, The hybrid model currently has a hardcoded CNN frontend with only the ViT backend being malleable. </br>
 A future refactor will add the ability to modify the CNN from command line but that utility is not currently implemented. </br>
 If modification to the CNN portion is essential, it is always possible to recode models/hybrid_model.py
@@ -31,15 +32,15 @@ If modification to the CNN portion is essential, it is always possible to recode
 
 <h2> Commands and Command line use </h2> </br>
 
-<strong> Preprocessing: </strong> </br>
+<strong> Preprocessing - preprocess_data.py: </strong> </br>
 </br>
 --ad_dir : <em> Directory containing raw dicom scans of AD patients </em> </br>
 --control_dir : <em> Directory containing raw dicom scans of controls </em> </br>
 --output_dir : <em> Directory for output (should default to /home/usr) </em> </br>
 
-<strong> Training </strong> </br>
+<strong> Training - train.py: </strong> </br>
 </br>
-DATA CONFIGURATION: <br/>
+DATA CONFIGURATION: </br>
 </br>
 --data : <em> directory containing preprocessed data </em> </br>
 --base_dir : <em> specifies root directory if using relative paths (optional, sometimes necessary), default none </em> </br>
@@ -72,4 +73,32 @@ HYBRID MODEL ARCHITECTURE OPTIONS: (N.B ONLY VIT PORTION IS MODIFIABLE) </br>
 --hybrid_mlp_ratio : <em>MLP ratio for the hybrid model </em> </br>
 --hybrid_dropout : <em>dropout rate for the ViT portion of the hybrid model, default 0.1 </em> </br>
 </br>
-TRAINING CONFIG
+TRAINING CONFIG: </br>
+--epochs : <em>number of epochs to train, default 50 </em> </br>
+--early_stopping : <em>number of epochs to wait for improvement in the monitor metric before early stopping, default 15 </em> </br>
+--monitor : <em> metric to monitor for early stopping/best model (auc, f1, balanced_acc), default balanced_acc </em> </br>
+--initial_freeze : <em> number of epochs for which to initially freeze the feature extractor, default 0 </em> </br>
+--margin : <em>decision margin for predictions +/- to 0.5, default 0.0 </em> </br>
+--grad_clip : <em> max norm for grad clipping, 0 disables gradient clipping, default 1 </em> </br>
+--warmup_epochs : <em> number of epochs for learning rate warmup </em> </br>
+--warmup_method : <em> if using lr warmup, which warmup scale method to use (linear or exponential), default linear </em> </br>
+--monitor_gradients : <em> enable gradient monitoring during training, default false </em> </br>
+--track_parameters : <em> track model params during training, default false </em> </br>
+</br>
+DATA AUGMENTATION: </br>
+--no_augmentation : <em> disables ALL augmentation </em> </br>
+--all_augmentation : <em> enables ALL augmentation </em> </br>
+--augment : <em> declare desired augmentation </em> </br> </br>
+<strong> Augmentation options: </strong>
+* Rotation
+* Translation
+* Scale
+* Flip
+* Deformation
+* Noise
+* Bias
+* Ghosting
+* Gamma
+* Constrast
+* Crop
+* Cutout 
