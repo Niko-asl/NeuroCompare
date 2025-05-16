@@ -86,9 +86,7 @@ TRAINING CONFIG: </br>
 --track_parameters : <em> track model params during training, default false </em> </br>
 </br>
 DATA AUGMENTATION: </br>
---no_augmentation : <em> disables ALL augmentation </em> </br>
---all_augmentation : <em> enables ALL augmentation </em> </br>
---augment : <em> declare desired augmentation </em> </br> </br>
+
 <strong> Augmentation options: </strong>
 * Rotation
 * Translation
@@ -102,3 +100,37 @@ DATA AUGMENTATION: </br>
 * Constrast
 * Crop
 * Cutout 
+</br>
+N.B: Increasing the number/probability of augmentation significantly increases runtime
+</br>
+--no_augmentation : <em> disables ALL augmentation </em> </br>
+--all_augmentation : <em> enables ALL augmentation </em> </br>
+--augment : <em> declare desired augmentation(s) from above list </em> </br> </br>
+--aug_prob : <em> probability of applying augmentation, default 0.5 </em> </br>
+--rotation_angle : <em> max rotation angle for rotation augment in degrees, default 10 </em> </br>
+--translation_voxels : <em> max translation in voxels for translation augment, default 5 </em> </br>
+--scale_range : <em> range for random scaling, in format [min, max], default [0.90. 1.10] </em> </br>
+--noise_percent : <em> standard deviation of noise as a percent of MRI max intensity, default 0.03 </em> </br>
+--deformation_sigma : <em> elastic deformation sigma param, default: 3 </em> </br>
+--deformation_magnitude : <em> elastic deformation magnitude parameter, default: 10 </em> </br>
+--bias_coeff : <em> bias field coefficient, default 0.5 </em> </br>
+--ghosting_max : <em> maximum number of ghosts allowed to haunt the MRI, default, 3 </em> </br>
+--gamma_range : <em> range for random gamma adjustment, in format [min, max], default [0.70. 1.50] </em> </br>
+--crop_size : <em> size of random crop (in voxels), default 80 </em> </br>
+--cutout_size_range : <em> Size range for cutouts (in voxels, [min, max]), default [20, 40] </em> </br>
+  </br>
+  </br>
+  OPTIMIZATION PARAMETERS: </br>
+  --weight_decay : <em> weight decay for L2 regularization, default 0.0001 </em> </br>
+  --optimizer : <em> optimizer types, adam, adamw, or sgd, default adamw </em> </br>
+  --scheduler : <em> learning rate scheduler (plateau, cosine, step, none), default plateau </em> </br>
+  --plateau_factor : <em> factor by which to reduce learning rate on plateau, default 0.5 (half lr on plateau) </em> </br>
+  --plateau_patience : <em> patience for plateau scheduler (in epochs), default 7 </em> </br>
+  --cosine_min_lr : <em> minimum learning rate for cosine scheduler, default 1e-06 </em> </br>
+  --step_size : <em> step size for stepLR scheduler, default 0.1 </em> </br>
+  --step_gamma : <em> gamma for stepLR scheduler, default 0.1 </em> </br>
+  </br> </br>
+  LOSS CONFIG: </br>
+  --loss : <em> loss function, currently supported are: cross entropy (ce), weighted cross entropy (weighted_ce) focal loss (focal), class balanced focal loss (cb_focal), asymmetric loss (asymmetric), margin loss (margin), binarcy crossentropy with logits (bce_logits), default weighted_ce </em> </br>
+  --class_weights : <em> use class weights with loss function to handle class imbalance, default False </em> </br>
+  --focal_gamma : <em> gamma param for focal loss, default 2.0 </em> </br>
