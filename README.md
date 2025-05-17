@@ -104,7 +104,7 @@ DATA AUGMENTATION: </br>
 </br>
 N.B: Increasing the number/probability of augments <strong> significantly </strong> increases runtime </br>
 --no_augmentation : <em> disables ALL augmentation </em> </br>
---all_augmentation : <em> enables ALL augmentation </em> </br>
+--all_augmentation : <em> enables ALL augmentation (very highly not recommended, makes MRI soup) </em> </br>
 --augment : <em> declare desired augmentation(s) from above list </em> </br>
 --aug_prob : <em> probability of applying augmentation, default 0.5 </em> </br>
 --rotation_angle : <em> max rotation angle for rotation augment in degrees, default 10 </em> </br>
@@ -120,17 +120,40 @@ N.B: Increasing the number/probability of augments <strong> significantly </stro
 --cutout_size_range : <em> Size range for cutouts (in voxels, [min, max]), default [20, 40] </em> </br>
   </br>
   </br>
-  OPTIMIZATION PARAMETERS: </br>
-  --weight_decay : <em> weight decay for L2 regularization, default 0.0001 </em> </br>
-  --optimizer : <em> optimizer types, adam, adamw, or sgd, default adamw </em> </br>
-  --scheduler : <em> learning rate scheduler (plateau, cosine, step, none), default plateau </em> </br>
-  --plateau_factor : <em> factor by which to reduce learning rate on plateau, default 0.5 (half lr on plateau) </em> </br>
-  --plateau_patience : <em> patience for plateau scheduler (in epochs), default 7 </em> </br>
-  --cosine_min_lr : <em> minimum learning rate for cosine scheduler, default 1e-06 </em> </br>
-  --step_size : <em> step size for stepLR scheduler, default 0.1 </em> </br>
-  --step_gamma : <em> gamma for stepLR scheduler, default 0.1 </em> </br>
+OPTIMIZATION PARAMETERS: </br>
+--weight_decay : <em> weight decay for L2 regularization, default 0.0001 </em> </br>
+--optimizer : <em> optimizer types, adam, adamw, or sgd, default adamw </em> </br>
+--scheduler : <em> learning rate scheduler (plateau, cosine, step, none), default plateau </em> </br>
+--plateau_factor : <em> factor by which to reduce learning rate on plateau, default 0.5 (half lr on plateau) </em> </br>
+--plateau_patience : <em> patience for plateau scheduler (in epochs), default 7 </em> </br>
+--cosine_min_lr : <em> minimum learning rate for cosine scheduler, default 1e-06 </em> </br>
+--step_size : <em> step size for stepLR scheduler, default 0.1 </em> </br>
+--step_gamma : <em> gamma for stepLR scheduler, default 0.1 </em> </br>
   </br> </br>
-  LOSS CONFIG: </br>
-  --loss : <em> loss function, currently supported are: cross entropy (ce), weighted cross entropy (weighted_ce) focal loss (focal), class balanced focal loss (cb_focal), asymmetric loss (asymmetric), margin loss (margin), binarcy crossentropy with logits (bce_logits), default weighted_ce </em> </br>
-  --class_weights : <em> use class weights with loss function to handle class imbalance, default False </em> </br>
-  --focal_gamma : <em> gamma param for focal loss, default 2.0 </em> </br>
+LOSS CONFIG: </br>
+--loss : <em> loss function, currently supported are: cross entropy (ce), weighted cross entropy (weighted_ce) focal loss (focal), class balanced focal loss (cb_focal), asymmetric loss (asymmetric), margin loss (margin), binarcy crossentropy with logits (bce_logits), default weighted_ce </em> </br>
+--class_weights : <em> use class weights with loss function to handle class imbalance, default False </em> </br>
+--focal_gamma : <em> gamma param for focal loss, default 2.0 </em> </br>
+--focal_alpha : <em> alpha param for focal loss, default 0.25 </em> </br>
+--beta : <em> beta parameter for class-balanced weighing </em> </br>
+--gamma_pos : <em> positive gamma parameter for asym loss, default 1 </em> </br>
+--gamma_neg : <em> negative gamma parameter for asym loss, default 4 </em> </br>
+--pos_margin : <em> margin for positive class predictions when using margin loss, default 0.5 </em> </br>
+--neg_margin : <em> margin for negative class predictions, default 0.5 </em> </br>
+--pos_weight : <em> weight for positive class predictions, default 2 </em> </br>
+</br>
+EVAL CONFIG:
+</br>
+--eval_batch_size : <em> batch size for evaluation process, default 4 </em> </br>
+--decision_margin : <em> decision margin for evaluation predictions, default 0.0 </em> </br>
+--save_predictions : <em> save individual decisions for downstream analysis, default False </em> </br>
+--export_features : <em> exports extracted features for visualisation (experimental), default False </em> </br>
+--test_time_augmentation : <em> use test time augmentation, default False </em> </br>
+--tta_samples : <em> number of augmented samples to use for test time augmentation, default 5 </em> </br>
+</br>
+LOGGING AND OUTPUT: </br>
+--output : <em> directory for results output (model file, metrics, etc), default scripts/output </em> </br>
+--exp_name : <em> Experiment name, defaults to {model_type}_{timestamp} </em> </br>
+--save_freq : <em> Save checkpoints every N epochs (0 saves best only) </em> </br>
+--debug : <em> debug mode with extra logging (not recommended), default False </em> </br>
+--verbose : <em> enable verbose output, default False </em> </br>
