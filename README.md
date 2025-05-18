@@ -148,8 +148,8 @@ EVAL CONFIG:
 --decision_margin : <em> decision margin for evaluation predictions, default 0.0 </em> </br>
 --save_predictions : <em> save individual decisions for downstream analysis, default False </em> </br>
 --export_features : <em> exports extracted features for visualisation (experimental), default False </em> </br>
---test_time_augmentation : <em> use test time augmentation, default False </em> </br>
---tta_samples : <em> number of augmented samples to use for test time augmentation, default 5 </em> </br>
+--test_time_augmentation : <em> use test time augmentation, not implemented </em> </br>
+--tta_samples : <em> number of augmented samples to use for test time augmentation, not implemented </em> </br>
 </br>
 LOGGING AND OUTPUT: </br>
 --output : <em> directory for results output (model file, metrics, etc), default scripts/output </em> </br>
@@ -157,3 +157,16 @@ LOGGING AND OUTPUT: </br>
 --save_freq : <em> Save checkpoints every N epochs (0 saves best only) </em> </br>
 --debug : <em> debug mode with extra logging (not recommended), default False </em> </br>
 --verbose : <em> enable verbose output, default False </em> </br>
+--tensorboard : <em> tensorboard logging, not implemented yet </em> </br>
+--wandb : <em> enables weights and biases logging, not implemented </em> </br>
+--wandb_project : <em> project name for wandb, not implemented </em> </br>
+--wandb_entity : <em> wandb entity name, not implemented </em> </br> </em> </br>
+</br>
+HARDWARE: </br>
+--gpu : <em> GPU hardware ID to use, default GPU 0 </em> </br>
+--num_workers : <em> number of data loading workers, default 4 </em> </br>
+--pin_memory : <em> use pin memory for GPU data transfer acceleration, default False </em> </br>
+--mixed_precision : <em> use mixed precision training, not implemented </em> </br>
+--distributed : <em> use distributed training, not implemented </em> </br>
+--world_size : <em> number of processes for dist training, not implemented </em> </br>
+--dist_url : <em> URL for distributed processing, not implemented </em> </br>
