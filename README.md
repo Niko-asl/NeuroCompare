@@ -173,5 +173,5 @@ HARDWARE: </br>
 </br>
 </br>
 <h2> Example commands </h2> </br> 
-A command can be as simple or complicated as your training setup. Below is an example command for training a 2 layer ViT with bce_logits loss and some augmentations - all other values would be set to defaults. </br>
+A command can be as simple or complicated as your training setup. Below is an example command for training a 2 layer ViT with bce_logits loss and some augmentations - all other values would be set to defaults. </br> </br>
 python train.py --data /home/usr/preprocessed_data/dataset_splits.csv --base_dir /home/usr --loss bce_logits --model vit --vit_depth 2 --augment rotation scale noise cutout --aug_prob 0.4 --weight_decay 0 --track_parameters --balanced_sampling
