@@ -113,11 +113,9 @@ class MRIAugmentation:
     # ELASTIC DEFORMATION
     @staticmethod
     def random_elastic_deformation(data, sigma=3, magnitude=10, target_shape=(182, 218, 182)):
-        """Random elastic deformation using displacement fields. (σ ≈ 3-5 vox, mag ≤ 10 vox)"""
+        #Random elastic deformation using displacement fields. (σ ≈ 3-5 vox, mag ≤ 10 vox)
         try:
             from scipy.ndimage import gaussian_filter, map_coordinates
-       
-            # First ensure the data is properly shaped
             data = MRIAugmentation.ensure_shape(data, target_shape)
             shape = data.shape
         
@@ -129,12 +127,11 @@ class MRIAugmentation:
                 indexing='ij'
             )
         
-            downscale_factor = 4  # Reduce memory usage
+            downscale_factor = 4  
             small_shape = (shape[0]//downscale_factor, shape[1]//downscale_factor, shape[2]//downscale_factor)
         
             # Generate small random fields and upscale them
             for i in range(3):
-                # Create small displacement field
                 field = np.random.rand(*small_shape) * 2 - 1
                 field = gaussian_filter(field, sigma, mode="constant", cval=0)
                 
@@ -143,18 +140,14 @@ class MRIAugmentation:
                 upscale_factors = [shape[j]/small_shape[j] for j in range(3)]
                 field = zoom(field, upscale_factors, order=1, mode='constant', cval=0)
                 
-                # Ensure the field matches exactly by reshaping if needed
                 if field.shape != shape:
                     field = MRIAugmentation.ensure_shape(field, shape)
                 
-                # Apply magnitude and add to coordinates
                 coords[i] = coords[i] + field * magnitude
                 
-            # Clip coordinates to valid range
             for i in range(3):
                 coords[i] = np.clip(coords[i], 0, shape[i] - 1)
         
-            # Apply the deformation using map_coordinates (much faster than loops)
             deformed = map_coordinates(data, coords, order=1, mode='constant', cval=0)
         
             # Ensure output shape
@@ -315,9 +308,8 @@ class MRIAugmentation:
     # SPATIAL CROPPING / PATCHING
     @staticmethod
     def random_crop(data, crop_size=(80, 80, 80), target_shape=(182, 218, 182)):
-        """Apply random cropping, then resize back to original. (80-128 vox cubed)"""
         try:
-            # Applies random cropping and resizes back to original
+            # Applies random 80-128 vox cropping and resizes back to original
             # I'm apprehensive about this but apparently its used in the literature
             # I wanna say Perez et al..?
             
