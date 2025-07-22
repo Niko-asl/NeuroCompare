@@ -4,6 +4,13 @@
 
 This is an early beta implementation of the 3D end-to-end model comparison framework for the DEMON group. </br> </br>
 
+<h2> Change Log </h2>br>
+22/07/25: </br>
+- Added HDF5 filetype support to dataloaders - framework now works with either NIFTI or HDF5 file format </br>
+- Added MONAI based GPU bound augmentations to streamline augmentation pipeline, kept CPU augmentation as fallback </br>
+
+
+
 <h2> End to end MRI analysis pipeline with 3 networks (currently) </h2> </br>
 1. 3D CNN </br>
 2. 3D Vision Transformer </br>
