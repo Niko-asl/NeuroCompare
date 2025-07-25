@@ -10,7 +10,8 @@ This is an early beta implementation of the 3D end-to-end model comparison frame
 - Added MONAI based GPU bound augmentations to streamline augmentation pipeline, kept CPU augmentation as fallback </br>
 </br>
 25/07/25: </br>
-- Added config support 
+- Added config support </br> 
+- Instead of tagging args at the end of train.py, model params can be declared in a config file which will then be parsed by the program </br>
 
 
 <h2> End to end MRI analysis pipeline with 3 networks (currently) </h2> </br>
