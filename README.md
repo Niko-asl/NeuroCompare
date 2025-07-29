@@ -12,7 +12,7 @@ This is an early beta implementation of the 3D end-to-end model comparison frame
 25/07/25: </br>
 - Added config support </br> 
 - Instead of tagging args at the end of train.py, model params can be declared in a config file which will then be parsed by the program </br>
-
+</br>
 29/07/25: </br> 
 - Added Densenet models to framework (Densenet 121, 169, and 264) 
 
