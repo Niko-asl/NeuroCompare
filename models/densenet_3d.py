@@ -47,6 +47,7 @@ class _DenseLayer(nn.Module):
 
 
 class _DenseBlock(nn.Module):
+    """Dense block consisting of multiple dense layers."""
     
     def __init__(self, num_layers, num_input_features, bn_size, growth_rate, drop_rate):
         super(_DenseBlock, self).__init__()
@@ -68,6 +69,7 @@ class _DenseBlock(nn.Module):
 
 
 class _Transition(nn.Module):
+    """Transition layer between dense blocks."""
     
     def __init__(self, num_input_features, num_output_features):
         super(_Transition, self).__init__()
@@ -84,6 +86,7 @@ class _Transition(nn.Module):
 
 
 class DenseNet3D(nn.Module):
+    """3D DenseNet implementation matching the paper's architecture."""
     
     def __init__(self, growth_rate=32, block_config=(6, 12, 24, 16),
                  num_init_features=64, bn_size=4, drop_rate=0.0, num_classes=2):
@@ -123,6 +126,7 @@ class DenseNet3D(nn.Module):
         # Linear layer
         self.classifier = nn.Linear(num_features, num_classes)
 
+        # Official init from torch repo
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(m.weight)
@@ -142,26 +146,26 @@ class DenseNet3D(nn.Module):
 
 
 def densenet121_3d(**kwargs):
-    #DenseNet-121 model
+    """DenseNet-121 3D model"""
     return DenseNet3D(growth_rate=32, block_config=(6, 12, 24, 16), **kwargs)
 
 
 def densenet169_3d(**kwargs):
-    #DenseNet-169 model
+    """DenseNet-169 3D model"""
     return DenseNet3D(growth_rate=32, block_config=(6, 12, 32, 32), **kwargs)
 
 
 def densenet201_3d(**kwargs):
-    #DenseNet-201 3D model
+    """DenseNet-201 3D model"""
     return DenseNet3D(growth_rate=32, block_config=(6, 12, 48, 32), **kwargs)
 
 
 def densenet264_3d(**kwargs):
-    #DenseNet-264 3D model - matches the paper exactly
+    """DenseNet-264 3D model - matches the paper exactly"""
     return DenseNet3D(growth_rate=32, block_config=(6, 12, 64, 48), **kwargs)
 
 
-
+# For compatibility with your factory pattern
 def create_densenet_model(densenet_type='264', num_classes=2, drop_rate=0.0):
     """Factory function to create DenseNet models."""
     

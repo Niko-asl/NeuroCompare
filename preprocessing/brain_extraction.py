@@ -7,16 +7,13 @@ import torch
 logger = logging.getLogger(__name__)
 
 
-# Skull stripping function 
-# Makes use of the HD-BET, a deep learning skull stripping framework, found at https://github.com/MIC-DKFZ/HD-BET
-
 class BrainExtractor:
     
     def __init__(self, output_dir):
         self.output_dir = output_dir
         self.skull_stripped_dir = os.path.join(output_dir, "skull_stripped")
         
-        # HD-BET runs on both CPU and GPU, this is just here to log which one is being used
+        # HD-BET runs on both CPU and GPU
         try:
             import torch
             self.gpu_available = torch.cuda.is_available()
@@ -30,25 +27,28 @@ class BrainExtractor:
             logger.info("PyTorch not installed, will use CPU for skull stripping")
     
     def extract(self, nifti_file):
-        
         try:
             if nifti_file is None or not os.path.exists(nifti_file):
                 logger.warning(f"Cannot perform skull stripping on non-existent file: {nifti_file}")
                 return None
                 
-            # output path
-            basename = os.path.basename(nifti_file).replace('.nii.gz', '')
+            # Create output paths
+            basename = os.path.basename(nifti_file).replace('.nii.gz', '').replace('.nii', '')
             output_dir = os.path.join(self.output_dir, "skull_stripped")
-            output_file = os.path.join(output_dir, f"{basename}_brain.nii.gz")  
-            hd_bet_output = os.path.join(output_dir, f"{basename}.nii.gz")  #
+            os.makedirs(output_dir, exist_ok=True)
             
-            # Skip files already processed
-            if os.path.exists(output_file):
+            # Final output file we want
+            final_output_file = os.path.join(output_dir, f"{basename}_brain.nii.gz")
+            
+            # Skip if already processed
+            if os.path.exists(final_output_file):
                 logger.info(f"Skull-stripped file already exists for {basename}, skipping")
-                return output_file
+                return final_output_file
             
-            # This just exists to set the device_param in the HD-BET command
-            # I probably could have done it above but I am not smart
+            # HD-BET output will have the exact name we specify (no automatic suffix)
+            hd_bet_output = os.path.join(output_dir, f"{basename}.nii.gz")
+            
+            # Set device parameter
             try:
                 import torch
                 if torch.cuda.is_available():
@@ -67,9 +67,8 @@ class BrainExtractor:
             cmd = [
                 "hd-bet",
                 "-i", nifti_file,
-                "-o", hd_bet_output,  
+                "-o", hd_bet_output,  # HD-BET will create exactly this file
                 "-device", device_param
-                #"--save_bet_mask"  # Uncomment if you want to keep the brain mask, No immediate use for it in this case
             ]
             
             logger.info(f"HD-BET command: {' '.join(cmd)}")
@@ -82,28 +81,24 @@ class BrainExtractor:
             )
             
             if process.returncode != 0:
-                logger.error(f"HD-BET error: {process.stderr}")
+                logger.error(f"HD-BET failed with return code {process.returncode}")
+                logger.error(f"HD-BET stderr: {process.stderr}")
+                logger.error(f"HD-BET stdout: {process.stdout}")
                 return None
             
-            
-            
-            expected_bet_file = hd_bet_output.replace('.nii.gz', '_bet.nii.gz')
-            
-            if os.path.exists(expected_bet_file):
-                os.rename(expected_bet_file, output_file)
-                return output_file
+            # HD-BET creates the file with the exact name we specified
+            if os.path.exists(hd_bet_output):
+                # Rename to our desired output filename
+                os.rename(hd_bet_output, final_output_file)
+                logger.info(f"HD-BET processing finished for: {os.path.basename(final_output_file)}")
+                return final_output_file
             else:
-                potential_files = glob.glob(os.path.join(output_dir, f"{basename}*.nii.gz"))
-                brain_files = [f for f in potential_files if "mask" not in os.path.basename(f)]
-                
-                if brain_files:
-                    found_file = brain_files[0]
-                    os.rename(found_file, output_file)
-                    logger.info(f"HD-BET Processing finished for: {os.path.basename(output_file)}")
-                    return output_file
-                
+                logger.error(f"HD-BET output not found: {hd_bet_output}")
+                # List what files are actually in the directory for debugging
+                all_files = os.listdir(output_dir)
+                logger.error(f"Files in output directory: {all_files}")
                 return None
             
         except Exception as e:
-            logger.error(f"Error in HD-BET skull stripping: {str(e)}")
+            logger.error(f"Error in HD-BET skull stripping for {nifti_file}: {str(e)}")
             return None

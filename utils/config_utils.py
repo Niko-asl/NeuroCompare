@@ -238,30 +238,50 @@ class ConfigManager:
             config = self.load_config(config_name)
         except Exception as e:
             return [f"Failed to load config: {e}"]
-        
+    
         issues = []
-        
+    
         # Required sections
         required_sections = ['data', 'model', 'training', 'optimization']
         for section in required_sections:
             if section not in config:
                 issues.append(f"Missing required section: {section}")
-        
+    
         # Validate data section
         if 'data' in config:
             data_config = config['data']
-            if 'data_path' not in data_config:
-                issues.append("Missing required field: data.data_path")
+            if 'data_path' not in data_config and 'data' not in data_config:
+                issues.append("Missing required field: data.data_path or data.data")
             if 'batch_size' in data_config and data_config['batch_size'] <= 0:
                 issues.append("Invalid batch_size: must be > 0")
-        
-        # Validate model section
+            if 'resize' in data_config and data_config['resize'] is not None:
+                if not isinstance(data_config['resize'], list) or len(data_config['resize']) != 3:
+                    issues.append("resize must be a list of 3 integers [D, H, W]")
+            if 'resize_method' in data_config:
+                if data_config['resize_method'] not in ['trilinear', 'nearest']:
+                    issues.append(f"Invalid resize_method: {data_config['resize_method']}")
+    
+        # Validate model  section
         if 'model' in config:
             model_config = config['model']
             if 'type' not in model_config:
                 issues.append("Missing required field: model.type")
-            elif model_config['type'] not in ['cnn', 'vit', 'hybrid']:
+            elif model_config['type'] not in ['cnn', 'vit', 'hybrid', 'densenet', 'minit', 'cnn_minit']:
                 issues.append(f"Invalid model type: {model_config['type']}")
+        
+            # Model-specific validation
+            model_type = model_config.get('type')
+            if model_type == 'minit' and 'minit' in model_config:
+                minit_config = model_config['minit']
+                if 'variant' in minit_config:
+                    if minit_config['variant'] not in ['nit', 'minit', 'mignit']:
+                        issues.append(f"Invalid MINiT variant: {minit_config['variant']}")
+        
+            if model_type == 'cnn_minit' and 'cnn_minit' in model_config:
+                cnn_minit_config = model_config['cnn_minit']
+                if 'target_size' in cnn_minit_config:
+                    if cnn_minit_config['target_size'] not in [64, 80, 96]:
+                        issues.append(f"Invalid CNN-MINiT target_size: {cnn_minit_config['target_size']}")
         
         # Validate training section
         if 'training' in config:
@@ -288,6 +308,8 @@ class ConfigManager:
                     'batch_size': 8,
                     'balanced_sampling': True,
                     'num_workers': 4,
+                    'resize': None,
+                    'resize_method': 'trilinear',
                 },
                 'model': {
                     'type': 'cnn',
@@ -406,7 +428,139 @@ class ConfigManager:
                     'probability': 0.5,
                     'techniques': ['rotation', 'translation', 'flip', 'noise'],
                 },
-            }
+            },
+            'densenet': {  # NEW
+                'experiment': {
+                    'name': 'densenet_experiment',
+                    'description': 'Template configuration for DenseNet-264 model',
+                },
+                'data': {
+                    'data_path': "dataset_splits.csv",
+                    'batch_size': 4,
+                    'balanced_sampling': True,
+                    'num_workers': 4,
+                },
+                'model': {
+                    'type': 'densenet',
+                    'densenet': {
+                        'type': '264',
+                        'growth_rate': 32,
+                        'dropout': 0.0,
+                        'bn_size': 4,
+                    }
+                },
+                'training': {
+                    'epochs': 100,
+                    'early_stopping': 20,
+                    'monitor': 'balanced_acc',
+                },
+                'optimization': {
+                    'learning_rate': 0.0001,
+                    'weight_decay': 0.001,
+                    'optimizer': 'adamw',
+                    'scheduler': {'type': 'cosine'},
+                },
+                'loss': {
+                    'type': 'weighted_ce',
+                    'class_weights': True,
+                },
+            },
+            
+            'minit': {  # NEW
+                'experiment': {
+                    'name': 'minit_experiment',
+                    'description': 'Template configuration for MINiT model',
+                },
+                'data': {
+                    'data_path': "dataset_splits.csv",
+                    'batch_size': 4,
+                    'balanced_sampling': True,
+                    'num_workers': 4,
+                    'resize': [64, 64, 64],  # MINiT works best with smaller volumes
+                    'resize_method': 'trilinear',
+                },
+                'model': {
+                    'type': 'minit',
+                    'minit': {
+                        'variant': 'minit',
+                        'block_size': 16,
+                        'patch_size': 4,
+                        'embed_dim': 256,
+                        'depth': 6,
+                        'heads': 8,
+                        'mlp_ratio': 1.2,
+                        'dropout': 0.125,
+                        'attn_dropout': 0.125,
+                    }
+                },
+                'training': {
+                    'epochs': 100,
+                    'early_stopping': 20,
+                    'monitor': 'auc',
+                    'warmup_epochs': 5,
+                },
+                'optimization': {
+                    'learning_rate': 0.0001,
+                    'weight_decay': 0.125,
+                    'optimizer': 'adamw',
+                    'scheduler': {'type': 'cosine'},
+                },
+                'loss': {
+                    'type': 'focal',
+                    'focal': {'gamma': 2.0, 'alpha': 0.25},
+                },
+                'hardware': {
+                    'gpu': 0,
+                    'mixed_precision': True,  # Recommended for MINiT
+                }
+            },
+        
+            'cnn_minit': {  # NEW
+                'experiment': {
+                    'name': 'cnn_minit_experiment',
+                    'description': 'Template configuration for CNN-MINiT hybrid model',
+                },
+                'data': {
+                    'data_path': "dataset_splits.csv",
+                    'batch_size': 6,
+                    'balanced_sampling': True,
+                    'num_workers': 4,
+                    # No resize needed - CNN handles downsampling
+                },
+                'model': {
+                    'type': 'cnn_minit',
+                    'cnn_minit': {
+                        'target_size': 64,
+                        'frontend_dropout': 0.3,
+                        'variant': 'minit',
+                        'block_size': 16,
+                        'patch_size': 4,
+                        'embed_dim': 256,
+                        'depth': 6,
+                        'heads': 8,
+                        'mlp_ratio': 1.2,
+                        'dropout': 0.125,
+                        'attn_dropout': 0.125,
+                    }
+                },
+                'training': {
+                    'epochs': 100,
+                    'early_stopping': 20,
+                    'monitor': 'balanced_acc',
+                    'warmup_epochs': 3,
+                },
+                'optimization': {
+                    'learning_rate': 0.0001,
+                    'weight_decay': 0.0005,
+                    'optimizer': 'adamw',
+                    'scheduler': {'type': 'plateau'},
+                },
+                'loss': {
+                    'type': 'cb_focal',
+                    'cb_focal': {'beta': 0.9999},
+                },
+            },
+                       
         }
         
         if model_type not in templates:

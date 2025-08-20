@@ -1,0 +1,151 @@
+# Alzheimer's MRI Classification Config
+# CNN Baseline Configuration
+
+# Experiment metadata
+experiment:
+  name: "cnn_baseline_v1"
+  description: "3-layer CNN with balanced sampling and standard augmentation"
+  tags: ["cnn", "baseline", "balanced"]
+
+# Data configuration
+data:
+  data: "/home/niko/Desktop/Final/dataset_splits.csv"
+  base_dir: "/home/niko"
+  batch_size: 8
+  balanced_sampling: true
+  num_workers: 4
+  pin_memory: true
+
+# Model architecture
+model:
+  type: "cnn"
+  
+  # CNN-specific parameters
+  cnn:
+    layers: 3
+    base_filters: 32
+    dropout: 0.5
+  
+  # ViT-specific parameters (unused for CNN)
+  vit:
+    patch_size: 16
+    depth: 12
+    heads: 12
+    embed_dim: 768
+    mlp_ratio: 4.0
+    dropout: 0.1
+  
+  # Hybrid-specific parameters (unused for CNN)
+  hybrid:
+    feature_dim: 256
+    transformer_dim: 256
+    num_heads: 8
+    depth: 4
+    mlp_ratio: 4.0
+    dropout: 0.1
+
+# Training configuration
+training:
+  epochs: 50
+  early_stopping: 15
+  monitor: "balanced_acc"
+  initial_freeze: 0
+  margin: 0.0
+  grad_clip: 1.0
+  warmup_epochs: 5
+  warmup_method: "linear"
+  monitor_gradients: false
+  track_parameters: false
+
+# Data augmentation
+augmentation:
+  enabled: true
+  strategy: "custom"  # Options: "none", "all", "default", "custom"
+  probability: 0.5
+  
+  # Custom augmentation selection
+  techniques:
+    - "rotation"
+    - "translation" 
+    - "scale"
+    - "flip"
+    - "noise"
+  
+  # Augmentation parameters
+  params:
+    rotation_angle: 10
+    translation_voxels: 5
+    scale_range: [0.9, 1.1]
+    noise_percent: 0.03
+    deformation_sigma: 3
+    deformation_magnitude: 10
+    bias_coeff: 0.5
+    ghosting_max: 3
+    gamma_range: [0.7, 1.5]
+    crop_size: 80
+    cutout_size_range: [20, 40]
+
+# Optimization
+optimization:
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  
+  # Scheduler configuration
+  scheduler:
+    type: "plateau"
+    plateau_factor: 0.5
+    plateau_patience: 7
+    cosine_min_lr: 0.000001
+    step_size: 30
+    step_gamma: 0.1
+
+# Loss function
+loss:
+  type: "weighted_ce"
+  class_weights: true
+  
+  # Loss-specific parameters
+  focal:
+    gamma: 2.0
+    alpha: 0.25
+  
+  cb_focal:
+    beta: 0.9999
+  
+  asymmetric:
+    gamma_pos: 1.0
+    gamma_neg: 4.0
+  
+  margin:
+    pos_margin: 0.5
+    neg_margin: 0.5
+    pos_weight: 2.0
+
+# Evaluation
+evaluation:
+  eval_batch_size: 4
+  decision_margin: 0.0
+  save_predictions: false
+  export_features: false
+  test_time_augmentation: false
+  tta_samples: 5
+
+# Logging and output
+logging:
+  output_dir: "output"
+  save_freq: 0
+  debug: false
+  verbose: true
+  tensorboard: false
+  wandb: false
+  wandb_project: "alzheimers-mri"
+  wandb_entity: null
+
+# Hardware
+hardware:
+  gpu: 0
+  mixed_precision: false
+  distributed: false
+  world_size: 1
+  dist_url: "env://"

@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 class AlzheimerDataset(Dataset):
     
-    def __init__(self, split_csv_path, split='train', transform=None, base_dir=None):
+    def __init__(self, split_csv_path, split='train', transform=None, base_dir=None, resize=None, resize_method='trilinear'):
     # dataset init
     
         """
@@ -25,6 +25,8 @@ class AlzheimerDataset(Dataset):
         self.df = self.df[self.df['split'] == split]
         self.transform = transform
         self.base_dir = base_dir
+        self.resize = resize
+        self.resize_method = resize_method
         
         self._validate_files()
         
@@ -93,6 +95,8 @@ class AlzheimerDataset(Dataset):
             
             # Convert to tensor
             mri_tensor = torch.from_numpy(mri_data).float().unsqueeze(0)
+            if self.resize is not None:
+                mri_tensor = self._apply_resize(mri_tensor)
             
             return mri_tensor, label
             
@@ -103,10 +107,29 @@ class AlzheimerDataset(Dataset):
             dummy_data = np.zeros((182, 218, 182), dtype=np.float32)
             dummy_tensor = torch.from_numpy(dummy_data).float().unsqueeze(0)
             return dummy_tensor, label
+            
+    def _apply_resize(self, mri_tensor):
+        """Apply resize if specified."""
+        import torch.nn.functional as F
+	    
+	# mri_tensor shape: (1, D, H, W) - has channel dimension from unsqueeze(0)
+        original_shape = mri_tensor.shape[-3:]  # (D, H, W)
+        target_shape = tuple(self.resize)
+	    
+        if original_shape != target_shape:
+	# Add batch dimension for F.interpolate: (1, 1, D, H, W)
+            resized = F.interpolate(
+                    mri_tensor.unsqueeze(0),
+                    size=target_shape,
+                    mode=self.resize_method,
+                    align_corners=False if self.resize_method == 'trilinear' else None
+                ).squeeze(0)  # Remove batch dim: (1, D, H, W)
+            return resized
+	    
+        return mri_tensor  
+    
 
-
-
-def create_data_loaders(split_csv_path, batch_size=8, num_workers=4, transforms=None, base_dir=None, use_balanced_sampler=True, pin_memory=True):
+def create_data_loaders(split_csv_path, batch_size=8, num_workers=4, transforms=None, base_dir=None, use_balanced_sampler=True, pin_memory=True, resize=None, resize_method='trlinear'):
     if transforms is None:
         transforms = {'train': None, 'val': None, 'test': None}
     
@@ -115,7 +138,9 @@ def create_data_loaders(split_csv_path, batch_size=8, num_workers=4, transforms=
             split_csv_path=split_csv_path,
             split=split,
             transform=transforms[split],
-            base_dir=base_dir
+            base_dir=base_dir,
+            resize=resize,
+            resize_method=resize_method
         )
         for split in ['train', 'val', 'test']
     }

@@ -90,12 +90,18 @@ def config_to_args(config):
         'data_balanced_sampling': 'balanced_sampling',
         'data_num_workers': 'num_workers',
         'data_pin_memory': 'pin_memory',
+        'data_resize': 'resize',
+        'data_resize_method': 'resize_method',
         
         # Model
         'model_type': 'model',
         'model_cnn_layers': 'cnn_layers',
         'model_cnn_base_filters': 'cnn_base_filters',
         'model_cnn_dropout': 'cnn_dropout',
+        'model_densenet_type': 'densenet_type',
+        'model_densenet_growth_rate': 'densenet_growth_rate',
+        'model_densenet_dropout': 'densenet_dropout',
+        'model_densenet_bn_size': 'densenet_bn_size',
         'model_vit_patch_size': 'vit_patch_size',
         'model_vit_depth': 'vit_depth',
         'model_vit_heads': 'vit_heads',
@@ -108,7 +114,26 @@ def config_to_args(config):
         'model_hybrid_depth': 'hybrid_depth',
         'model_hybrid_mlp_ratio': 'hybrid_mlp_ratio',
         'model_hybrid_dropout': 'hybrid_dropout',
-        
+        'model_minit_variant': 'minit_variant',
+        'model_minit_block_size': 'minit_block_size',
+        'model_minit_patch_size': 'minit_patch_size', 
+        'model_minit_embed_dim': 'minit_embed_dim',
+        'model_minit_depth': 'minit_depth',
+        'model_minit_heads': 'minit_heads',
+        'model_minit_mlp_ratio': 'minit_mlp_ratio',
+        'model_minit_dropout': 'minit_dropout',
+        'model_minit_attn_dropout': 'minit_attn_dropout',
+        'model_cnn_minit_target_size': 'cnn_minit_target_size',
+        'model_cnn_minit_frontend_dropout': 'cnn_minit_frontend_dropout',
+        'model_cnn_minit_variant': 'cnn_minit_variant',
+        'model_cnn_minit_block_size': 'cnn_minit_block_size',
+        'model_cnn_minit_patch_size': 'cnn_minit_patch_size',
+        'model_cnn_minit_embed_dim': 'cnn_minit_embed_dim',
+        'model_cnn_minit_depth': 'cnn_minit_depth',
+        'model_cnn_minit_heads': 'cnn_minit_heads',
+        'model_cnn_minit_mlp_ratio': 'cnn_minit_mlp_ratio',
+        'model_cnn_minit_dropout': 'model_cnn_minit_dropout',
+        'model_cnn_minit_attn_dropout': 'model_cnn_minit_attn_dropout',
         # Training
         'training_epochs': 'epochs',
         'training_early_stopping': 'early_stopping',
@@ -363,6 +388,8 @@ def save_config(args, config_path):
             'balanced_sampling': getattr(args, 'balanced_sampling', False),
             'num_workers': getattr(args, 'num_workers', 4),
             'pin_memory': getattr(args, 'pin_memory', False),
+            'resize': getattr(args, 'resize', None),
+            'resize_method': getattr(args, 'resize_method', 'trilinear'),
         },
         'model': {
             'type': args.model,
@@ -387,6 +414,30 @@ def save_config(args, config_path):
                 'mlp_ratio': getattr(args, 'hybrid_mlp_ratio', 4.0),
                 'dropout': getattr(args, 'hybrid_dropout', 0.1),
             },
+            'minit': {
+                'variant': getattr(args, 'minit_variant', 'minit'),
+                'block_size': getattr(args, 'minit_block_size', 16),
+                'patch_size': getattr(args, 'minit_patch_size', 4),
+                'embed_dim': getattr(args, 'minit_embed_dim', 256),
+                'depth': getattr(args, 'minit_depth', 6),
+                'heads': getattr(args, 'minit_heads', 8),
+                'mlp_ratio': getattr(args, 'minit_mlp_ratio', 1.2),
+                'dropout': getattr(args, 'minit_dropout', 0.125),
+                'attn_dropout': getattr(args, 'minit_attn_dropout', 0.125),
+            },
+            'cnn_minit': {
+                'target_size': getattr(args, 'cnn_minit_target_size', 64),
+                'frontend_dropout': getattr(args, 'cnn_minit_frontend_dropout', 0.2),
+                'variant': getattr(args, 'cnn_minit_variant', 'minit'),
+                'block_size': getattr(args, 'cnn_minit_block_size', 16),
+                'patch_size': getattr(args, 'cnn_minit_patch_size', 4),
+                'embed_dim': getattr(args, 'cnn_minit_embed_dim', 256),
+                'depth': getattr(args, 'cnn_minit_depth', 6),
+                'heads': getattr(args, 'cnn_minit_heads', 8),
+                'mlp_ratio': getattr(args, 'cnn_minit_mlp_ratio', 1.2),
+                'dropout': getattr(args, 'cnn_minit_dropout', 0.125),
+                'attn_dropout': getattr(args, 'cnn_minit_attn_dropout', 0.125),
+                },
         },
         ######## Test this part then come back to finish it #############
     }
@@ -420,13 +471,18 @@ def add_data_arguments(parser):
                            help='Batch size for training and evaluation')
     data_group.add_argument('--balanced_sampling', action='store_true',
                            help='Use balanced sampling for training batches')
+    data_group.add_argument('--resize', type=int, nargs=3, default=None, metavar=('D', 'H', 'W'),
+                           help='Resize all volumes to specified dimensions (e.g., --resize 64 64 64)')
+    data_group.add_argument('--resize_method', type=str, default='trilinear', 
+                           choices=['trilinear', 'nearest'],
+                           help='Interpolation method for resizing')
 ######### Future model args go here ##############
 def add_model_arguments(parser):
     """Add model architecture arguments."""
     model_group = parser.add_argument_group('Model Architecture')
     
     model_group.add_argument('--model', type=str, default='cnn', 
-                            choices=['cnn', 'vit', 'hybrid', 'densenet'],
+                            choices=['cnn', 'vit', 'hybrid', 'densenet', 'minit', 'cnn_minit'],
                             help='Model architecture to train')
     
     cnn_group = parser.add_argument_group('CNN Architecture Options')
@@ -463,6 +519,73 @@ def add_model_arguments(parser):
                           help='MLP ratio for transformer blocks')
     vit_group.add_argument('--vit_dropout', type=float, default=0.1,
                           help='Dropout rate for ViT')
+    
+    # MINIT architecture params
+    minit_group = parser.add_argument_group('MINiT Architecture Options')
+    
+    minit_group.add_argument('--minit_variant', type=str, default='minit',
+                            choices=['nit', 'minit', 'mignit'],
+                            help='MINiT model variant')
+    
+    minit_group.add_argument('--minit_block_size', type=int, default=16,
+                            help='Size of blocks for multiple instance learning')
+    minit_group.add_argument('--minit_patch_size', type=int, default=4,
+                            help='Size of patches within blocks (4 for MINiT, 8 for NiT)')
+    
+    minit_group.add_argument('--minit_embed_dim', type=int, default=256,
+                            help='Embedding dimension for MINiT')
+    minit_group.add_argument('--minit_depth', type=int, default=6,
+                            help='Number of transformer blocks')
+    minit_group.add_argument('--minit_heads', type=int, default=8,
+                            help='Number of attention heads')
+    minit_group.add_argument('--minit_mlp_ratio', type=float, default=1.2,
+                            help='MLP ratio for transformer blocks')
+    minit_group.add_argument('--minit_dropout', type=float, default=0.125,
+                            help='Dropout rate for MINiT')
+    minit_group.add_argument('--minit_attn_dropout', type=float, default=0.125,
+                            help='Attention dropout rate for MINiT')
+
+
+
+    # In cli.py, update the CNN-MINiT arguments to avoid conflicts
+
+    # CNN-MINiT Hybrid parameters
+    cnn_minit_group = parser.add_argument_group('CNN-MINiT Hybrid Options')
+    
+    cnn_minit_group.add_argument('--cnn_minit_target_size', type=int, default=64,
+                                 choices=[64, 80, 96],
+                                 help='Target size for CNN downsampling before MINiT')
+
+    cnn_minit_group.add_argument('--cnn_minit_frontend_dropout', type=float, default=0.3,
+                                 help='Dropout rate for CNN frontend in hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_variant', type=str, default='minit',
+                                 choices=['nit', 'minit', 'mignit'],
+                                 help='MINiT variant to use as backend for hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_block_size', type=int, default=16,
+                                 help='Block size for MINiT backend in hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_patch_size', type=int, default=4,
+                                 help='Patch size for MINiT backend in hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_embed_dim', type=int, default=256,
+                                 help='Embedding dimension for MINiT backend in hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_depth', type=int, default=6,
+                                 help='Number of transformer blocks in MINiT backend')
+
+    cnn_minit_group.add_argument('--cnn_minit_heads', type=int, default=8,
+                                 help='Number of attention heads in MINiT backend')
+
+    cnn_minit_group.add_argument('--cnn_minit_mlp_ratio', type=float, default=1.2,
+                                 help='MLP ratio for MINiT backend transformer blocks')
+
+    cnn_minit_group.add_argument('--cnn_minit_dropout', type=float, default=0.125,
+                                 help='Dropout rate for MINiT backend in hybrid model')
+
+    cnn_minit_group.add_argument('--cnn_minit_attn_dropout', type=float, default=0.125,
+                                 help='Attention dropout rate for MINiT backend in hybrid model')
 
     # Hybrid model params
     hybrid_group = parser.add_argument_group('Hybrid Model Architecture Options')

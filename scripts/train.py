@@ -22,7 +22,7 @@ from data.augmentation import MRIAugmentation
 from models.cnn_factory import create_cnn_model
 from models.vision_transformer import VisionTransformer3D
 from models.hybrid_model import HybridCNNTransformer
-
+from models.minit_factory import create_minit_model_factory, print_model_info, validate_configuration
 
 def train_epoch(model, dataloader, criterion, optimizer, device, args):
     """
@@ -472,7 +472,10 @@ def main():
     logger.info(f'Loading data from {args.data}')
     if args.base_dir:
         logger.info(f'Using base directory: {args.base_dir}')
-    
+    logger.info("About to create data loaders...")
+    logger.info(f"Number of workers: {args.num_workers}")
+
+
     try:
         dataloaders = create_data_loaders(
             args.data,
@@ -481,7 +484,9 @@ def main():
             base_dir=args.base_dir,
             use_balanced_sampler=args.balanced_sampling,
             num_workers=args.num_workers,
-            pin_memory=args.pin_memory
+            pin_memory=args.pin_memory,
+            resize = args.resize,
+            resize_method = args.resize_method
         )
     except FileNotFoundError as e:
         logger.error(f"Error loading dataset: {e}")
@@ -489,14 +494,11 @@ def main():
         logger.error("If they're relative paths, use --base_dir to specify the root directory.")
         return
     
-    
-    train_labels = []
-    for _, label in dataloaders['train'].dataset:
-        train_labels.append(label)
-    
-    train_labels = np.array(train_labels)
+    train_df = pd.read_csv(args.data)
+    train_df = train_df[train_df['split'] == 'train']
+    train_labels = [1 if row['group'] == 'AD' else 0 for _, row in train_df.iterrows()]
     class_counts = np.bincount(train_labels)
-    logger.info(f"Training set class distribution: {class_counts}")
+    logger.info(f"Training set class distribution: {class_counts} (gang gang)")    
     
     # Calculate class weights for balanced loss if requested
     if args.class_weights:
@@ -508,19 +510,29 @@ def main():
         logger.info(f"Using class weights: {class_weights}")
     else:
         class_weights = None
+
     
     # Sample a batch to get input dimensions
     # This is mostly debug but also nice to know
+#    try:
+ #       logger.info("Fetching a sample batch...")
+  #      sample_inputs, sample_labels = next(iter(dataloaders['train']))
+#        logger.info(f"Sample batch shape: {sample_inputs.shape}")
+#        input_shape = sample_inputs.shape[2:]  # D, H, W (excluding batch and channel dims)
+#        logger.info(f'Input shape: {input_shape}')
     try:
-        logger.info("Fetching a sample batch...")
-        sample_inputs, sample_labels = next(iter(dataloaders['train']))
-        logger.info(f"Sample batch shape: {sample_inputs.shape}")
-        input_shape = sample_inputs.shape[2:]  # D, H, W (excluding batch and channel dims)
-        logger.info(f'Input shape: {input_shape}')
+        # Calculate input shape based on resize flag or use default
+        if args.resize:
+            input_shape = tuple(args.resize)
+            logger.info(f'Using resized input shape: {input_shape}')
+        else:
+           input_shape = (182, 218, 182)  # Known preprocessing output shape
+           logger.info(f'Using default input shape: {input_shape}')
     except Exception as e:
-        logger.error(f"Error loading a batch: {e}")
+        logger.error(f"Error determining input shape: {e}")
         logger.error(f"Exception details: {str(e)}")
         return
+ 
     
     # This is the cool part
     # Dynamic model creation from command line parameters
@@ -536,6 +548,17 @@ def main():
             base_filters=args.cnn_base_filters,
             dropout_rate=args.cnn_dropout
         )
+        
+    elif args.model == 'densenet':
+        # NEW: DenseNet creation
+        from models.densenet_3d import create_densenet_model
+        model = create_densenet_model(
+            densenet_type=args.densenet_type,
+            num_classes=2,
+            drop_rate=args.densenet_dropout
+        )
+        logger.info(f"Created DenseNet-{args.densenet_type} with growth_rate={args.densenet_growth_rate}")    
+        
     elif args.model == 'vit':
         from models.vit_factory import create_vit_model
         model = create_vit_model(
@@ -550,6 +573,71 @@ def main():
             drop_rate=args.vit_dropout,
             attn_drop_rate=args.vit_dropout
         )
+        
+    elif args.model == 'minit':
+        # Validate configuration
+        issues = validate_configuration(
+            model_variant=args.minit_variant,
+            vol_size=input_shape,
+            block_size=args.minit_block_size,
+            patch_size=args.minit_patch_size,
+            embed_dim=args.minit_embed_dim,
+            num_heads=args.minit_heads
+        )
+        
+        if issues and args.verbose:
+            for issue in issues:
+                logger.warning(f"MINiT config: {issue}")
+        
+        # Create MINiT model
+        model = create_minit_model_factory(
+            vol_size=input_shape,
+            in_channels=1,
+            num_classes=2,
+            model_variant=args.minit_variant,
+            block_size=args.minit_block_size,
+            patch_size=args.minit_patch_size,
+            embed_dim=args.minit_embed_dim,
+            depth=args.minit_depth,
+            num_heads=args.minit_heads,
+            mlp_ratio=args.minit_mlp_ratio,
+            drop_rate=args.minit_dropout,
+            attn_drop_rate=args.minit_attn_dropout,
+            amp_enabled=args.mixed_precision
+        )
+        
+        logger.info(f"Created MINiT model variant: {args.minit_variant}")
+        if args.verbose:
+            print_model_info(model, args.minit_variant)
+            
+    
+    
+    elif args.model == 'cnn_minit':
+        from models.cnn_minit_factory import create_cnn_minit_model
+    
+        model = create_cnn_minit_model(
+            # CNN-specific parameters
+            target_size=args.cnn_minit_target_size,
+            cnn_dropout=args.cnn_minit_frontend_dropout,
+        
+            # MINiT backend parameters - using cnn_minit specific args
+            minit_variant=args.cnn_minit_variant,
+            minit_block_size=args.cnn_minit_block_size,
+            minit_patch_size=args.cnn_minit_patch_size,
+            minit_embed_dim=args.cnn_minit_embed_dim,
+            minit_depth=args.cnn_minit_depth,
+            minit_heads=args.cnn_minit_heads,
+            minit_mlp_ratio=args.cnn_minit_mlp_ratio,
+            minit_dropout=args.cnn_minit_dropout,
+            minit_attn_dropout=args.cnn_minit_attn_dropout,
+        
+            num_classes=2,
+            amp_enabled=args.mixed_precision
+        )
+    
+        logger.info(f"Created CNN-MINiT hybrid: target_size={args.cnn_minit_target_size}, "
+                    f"variant={args.cnn_minit_variant}")
+        
     elif args.model == 'hybrid':
         from models.hybrid_factory import create_hybrid_model
         model = create_hybrid_model(
