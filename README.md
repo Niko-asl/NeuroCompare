@@ -14,7 +14,14 @@ This is an early beta implementation of the 3D end-to-end model comparison frame
 - Instead of tagging args at the end of train.py, model params can be declared in a config file which will then be parsed by the program </br>
 </br>
 29/07/25: </br> 
-- Added Densenet models to framework (Densenet 121, 169, and 264) 
+- Added Densenet models to framework (Densenet 121, 169, and 264) </br>
+</br>
+20/08/25 </br>
+- Added MINiT/MIGiT/NiT models (Singla et al., 2022) </br>
+- Added CNN hybridised MINiT/MIGiT/NiT models </br>
+- Added dataset preprocessing for external evaluation </br>
+- Added script for external evaluation </br>
+
 
 <h2> End to end MRI analysis pipeline with 3 networks (currently) </h2> </br>
 1. 3D CNN </br>
