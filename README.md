@@ -70,7 +70,7 @@ MODEL ARCHITECTURE: (N.B, THE DEFAULT CNN IS A RESNET)</br>
 </br>
 --model : <em>Which model architecture to train (currently supports CNN, ViT, or Hybrid), default cnn </em> </br>
 </br>
-CNN ARCHITECTURE OPTIONS:
+CNN ARCHITECTURE OPTIONS: </br>
 --cnn_layers : <em> Depth of CNN network, 2-6 layers currently supported, default 3  </em> </br>
 --cnn_base_filters : <em> number of filters in the first convolutional layer of the CNN (doubles every layer after), default 32 </em> </br>
 --cnn_dropout : <em> dropout rate for CNN, default 0.5 (specification highly recommended) </em> </br>
