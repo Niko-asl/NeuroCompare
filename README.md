@@ -3,7 +3,7 @@
 </br>
 
 This is an early beta implementation of the 3D end-to-end model comparison framework for the DEMON group. </br> </br>
-
+Public Release </br><br>
 <h2> Change Log </h2>
 22/07/25: </br>
 - Added HDF5 filetype support to dataloaders - framework now works with either NIFTI or HDF5 file format </br>
