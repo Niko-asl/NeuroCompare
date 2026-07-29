@@ -2,7 +2,7 @@
 
 </br>
 
-This is an early beta implementation of the 3D end-to-end model comparison framework for the DEMON group. </br> </br>
+This is an early beta implementation of the 3D end-to-end model comparison framework. </br> </br>
 Public Release </br><br>
 <h2> Change Log </h2>
 22/07/25: </br>
