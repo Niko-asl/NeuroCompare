@@ -1,246 +1,196 @@
+"""
+Datasets and data loaders.
+
+Each item is (volume, label, domain, index):
+  volume : float tensor (1, D, H, W)
+  label  : 1 = AD, 0 = Control
+  domain : integer cohort id from the training split's cohorts (-1 if the
+           cohort was not seen in training, or if the CSV has no cohort column)
+  index  : row position in dataset.df, so predictions and features can be
+           joined back to subject / scan / cohort without relying on order
+
+Use `unpack_batch` in loops so code works with this 4-tuple.
+"""
+
 import os
+import random
+
 import numpy as np
 import pandas as pd
-import h5py
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
+DEFAULT_SHAPE = (182, 218, 182)
+COHORT_COLUMNS = ('cohort', 'dataset', 'Dataset')
 
-# Added for local HDF5 format training
 
-class AlzheimerDatasetHDF5(Dataset):
-    def __init__(self, split_csv_path, split='train', transform=None, base_dir=None, resize=None, resize_method='trilinear'):
-        """
-        Initialize the dataset.
-        
-        Parameters:
-        split_csv_path : str
-            N.B path files must lead to .h5 files to use this
-        split : str
-            Which split to use
-        transform : callable, optional
-        base_dir : str, optional
-        """
-        
-        self.df = pd.read_csv(split_csv_path)
-        self.df = self.df[self.df['split'] == split]
+def cohort_column(df):
+    for col in COHORT_COLUMNS:
+        if col in df.columns:
+            return col
+    return None
+
+
+def unpack_batch(batch):
+    """Return (inputs, labels, domains, indices); tolerates old 2-tuples."""
+    if len(batch) == 4:
+        return batch
+    inputs, labels = batch
+    n = labels.shape[0]
+    return inputs, labels, torch.full((n,), -1, dtype=torch.long), torch.full((n,), -1, dtype=torch.long)
+
+
+class _ScanDataset(Dataset):
+    def __init__(self, split_csv_path, split='train', transform=None, base_dir=None,
+                 resize=None, resize_method='trilinear', domain_map=None):
+        df = pd.read_csv(split_csv_path)
+        self.df = df[df['split'] == split].reset_index(drop=True)
+        self.split = split
         self.transform = transform
         self.base_dir = base_dir
         self.resize = resize
         self.resize_method = resize_method
-        
+
+        self.labels = np.array([1 if g == 'AD' else 0 for g in self.df['group']], dtype=np.int64)
+        col = cohort_column(self.df)
+        if col is not None and domain_map:
+            self.domains = np.array([domain_map.get(c, -1) for c in self.df[col]], dtype=np.int64)
+        else:
+            self.domains = np.full(len(self.df), -1, dtype=np.int64)
+
+        unique, counts = np.unique(self.labels, return_counts=True)
+        self.class_counts = dict(zip(unique.tolist(), counts.tolist()))
         self._validate_files()
-        
-        # Calculate class distribution
-        self.calculate_class_distribution()
-        
-        print(f"Loaded {len(self.df)} HDF5 files for {split} split")
-    
-    def _validate_files(self):
-        # File validator
-        if len(self.df) > 0:
-            first_file = self._resolve_path(self.df.iloc[0]['final_file'])
-            if not os.path.exists(first_file):
-                raise FileNotFoundError(
-                    f"File not found: {first_file}\n"
-                    f"Please check if the base_dir (currently {self.base_dir}) is set correctly"
-                )
-            
-            if not first_file.endswith('.h5'):
-                raise ValueError(
-                    f"Expected HDF5 file (.h5), got: {first_file}\n"
-                    f"Please run the NIfTI to HDF5 converter first"
-                )
-    
-    def calculate_class_distribution(self):
-        # class dist for balanced sampling
-        self.labels = np.array([1 if row['group'] == 'AD' else 0 for _, row in self.df.iterrows()])
-        unique_labels, counts = np.unique(self.labels, return_counts=True)
-        self.class_counts = dict(zip(unique_labels, counts))
-        print(f"Class distribution for {len(self.labels)} samples: {self.class_counts}")
-    	
-    def get_sampler(self):
-        class_weights = {
-            class_idx: 1.0/count
-            for class_idx, count in self.class_counts.items()
-        }
-        weights = [class_weights[label] for label in self.labels]
-        sampler = WeightedRandomSampler(
-            weights=weights,
-            num_samples=len(weights),
-            replacement=True
-        )
-        return sampler
-    
+        print(f"Loaded {len(self.df)} scans for '{split}' split, class counts {self.class_counts}")
+
     def _resolve_path(self, file_path):
-        if self.base_dir is not None:
-            return os.path.join(self.base_dir, file_path)
-        return file_path
-    
+        return os.path.join(self.base_dir, file_path) if self.base_dir is not None else file_path
+
+    def _validate_files(self):
+        missing = [p for p in self.df['final_file'] if not os.path.exists(self._resolve_path(p))]
+        if missing:
+            raise FileNotFoundError(
+                f"{len(missing)} of {len(self.df)} files in split '{self.split}' not found, "
+                f"e.g. {self._resolve_path(missing[0])} (base_dir={self.base_dir})"
+            )
+
+    def _load_volume(self, path):
+        raise NotImplementedError
+
+    def get_sampler(self, generator=None):
+        weights = [1.0 / self.class_counts[l] for l in self.labels]
+        return WeightedRandomSampler(weights=weights, num_samples=len(weights),
+                                     replacement=True, generator=generator)
+
     def __len__(self):
         return len(self.df)
-    
+
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        # Path to HDF5 file
-        hdf5_path = self._resolve_path(row['final_file'])
-        label = 1 if row['group'] == 'AD' else 0
-        
+        path = self._resolve_path(self.df.iloc[idx]['final_file'])
+        # No silent fallback: an unreadable volume is a data error, not a zero image.
         try:
-            with h5py.File(hdf5_path, 'r') as f:
-                mri_data = f['volume'][:] 
-            
-            mri_data = np.ascontiguousarray(mri_data)
-            
-            if self.transform:
-                mri_data = self.transform(mri_data)
-                mri_data = np.ascontiguousarray(mri_data)
-            
-            mri_tensor = torch.from_numpy(mri_data).float().unsqueeze(0)
-            
-            if self.resize is not None:
-                mri_tensor = self._apply_resize(mri_tensor)
-                
-            return mri_tensor, label
-            
+            data = np.ascontiguousarray(self._load_volume(path))
         except Exception as e:
-            print(f"Error loading {hdf5_path}: {e}")
-            dummy_data = np.zeros((182, 218, 182), dtype=np.float32)
-            dummy_tensor = torch.from_numpy(dummy_data).float().unsqueeze(0)
-            return dummy_tensor, label
-      
-    def _apply_resize(self, mri_tensor):
-        """Apply resize if specified."""
-        import torch.nn.functional as F
-	    
-	# mri_tensor shape: (1, D, H, W) - has channel dimension from unsqueeze(0)
-        original_shape = mri_tensor.shape[-3:]  # (D, H, W)
-        target_shape = tuple(self.resize)
-	    
-        if original_shape != target_shape:
-	# Add batch dimension for F.interpolate: (1, 1, D, H, W)
-            resized = F.interpolate(
-		mri_tensor.unsqueeze(0),
-		size=target_shape,
-		mode=self.resize_method,
-		align_corners=False if self.resize_method == 'trilinear' else None
-            ).squeeze(0)  # Remove batch dim: (1, D, H, W)
-            return resized
-	    
-        return mri_tensor  
-      
-
-def create_data_loaders_hdf5(split_csv_path, batch_size=8, num_workers=4, transforms=None, base_dir=None, use_balanced_sampler=True, pin_memory=True, resize=None, resize_method='trilinear'):
-# Like the create data laoders of the original but for HDF5 files
-    if transforms is None:
-        transforms = {'train': None, 'val': None, 'test': None}
-    
-    datasets = {
-        split: AlzheimerDatasetHDF5(
-            split_csv_path=split_csv_path,
-            split=split,
-            transform=transforms[split],
-            base_dir=base_dir,
-            resize=resize,
-            resize_method=resize_method
-        )
-        for split in ['train', 'val', 'test']
-    }
-    
-    train_sampler = None
-    if use_balanced_sampler:
-        train_sampler = datasets['train'].get_sampler()
-        print("Using balanced sampling for training data")
-        
-        # Test sampler
-        indices = [train_sampler.__iter__().__next__() for _ in range(32)]
-        labels = [datasets['train'].labels[i] for i in indices]
-        unique, counts = np.unique(labels, return_counts=True)
-        print(f"Example balanced batch distribution: {dict(zip(unique, counts))}")
-    
-    dataloaders = {
-        'train': DataLoader(
-            datasets['train'],
-            batch_size=batch_size,
-            shuffle=(train_sampler is None),
-            sampler=train_sampler,
-            num_workers=num_workers,
-            pin_memory=pin_memory
-        ),
-        'val': DataLoader(
-            datasets['val'],
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=pin_memory
-        ),
-        'test': DataLoader(
-            datasets['test'],
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=pin_memory
-        )
-    }
-    
-    return dataloaders
+            raise RuntimeError(f"Failed to load {path}: {e}") from e
+        if self.transform:
+            data = np.ascontiguousarray(self.transform(data))
+        tensor = torch.from_numpy(data).float().unsqueeze(0)
+        if self.resize is not None and tuple(tensor.shape[-3:]) != tuple(self.resize):
+            tensor = F.interpolate(
+                tensor.unsqueeze(0), size=tuple(self.resize), mode=self.resize_method,
+                align_corners=False if self.resize_method == 'trilinear' else None,
+            ).squeeze(0)
+        return tensor, int(self.labels[idx]), int(self.domains[idx]), idx
 
 
-def create_data_loaders(split_csv_path, batch_size=8, num_workers=4, transforms=None, base_dir=None, use_balanced_sampler=True, pin_memory=True, force_nifti=False, resize=None, resize_method='trilinear'):
-# backwards compatible auto data loader
-# loads whatever filetype it sees (hdf5 or nifti)
-    try:
-        df = pd.read_csv(split_csv_path)
-        sample_file = df['final_file'].iloc[0]
-        
-        if sample_file.endswith('.h5') and not force_nifti:
-            print("Detected HDF5 files - using fast HDF5 loader")
-            return create_data_loaders_hdf5(split_csv_path, batch_size, num_workers, transforms, base_dir, use_balanced_sampler, pin_memory, resize, resize_method)
-        else:
-            print("Detected NIfTI files - using standard NIfTI loader")
-            # Import the original function
-            from data.dataset_original import create_data_loaders as create_data_loaders_nifti
-            return create_data_loaders_nifti(split_csv_path, batch_size, num_workers, transforms, base_dir, use_balanced_sampler, pin_memory, resize, resize_method)
-            
-    except Exception as e:
-        print(f"Error detecting file type: {e}")
-        print("Falling back to NIfTI loader")
-        from data.dataset_original import create_data_loaders as create_data_loaders_nifti
-        return create_data_loaders_nifti(split_csv_path, batch_size, num_workers, transforms, base_dir, use_balanced_sampler, pin_memory, resize, resize_method)
-        
-        
-def create_evaluation_dataloader(split_csv_path, batch_size=4, transform=None, 
-                                base_dir=None, num_workers=4, pin_memory=True, 
-                                resize=None, resize_method='trilinear'):
-    """
-    Create a single dataloader for evaluation (no train/val splits needed)
-    """
-    # Determine file type
+class AlzheimerDataset(_ScanDataset):
+    """NIfTI volumes."""
+    def _load_volume(self, path):
+        import nibabel as nib
+        return nib.load(path).get_fdata(dtype=np.float32)
+
+
+class AlzheimerDatasetHDF5(_ScanDataset):
+    """HDF5 volumes stored under the 'volume' key."""
+    def _load_volume(self, path):
+        import h5py
+        with h5py.File(path, 'r') as f:
+            return f['volume'][:]
+
+
+def _dataset_class(split_csv_path):
+    first = pd.read_csv(split_csv_path)['final_file'].iloc[0]
+    return AlzheimerDatasetHDF5 if str(first).endswith('.h5') else AlzheimerDataset
+
+
+def build_domain_map(split_csv_path):
+    """Cohort -> integer id, from cohorts present in the training split only."""
     df = pd.read_csv(split_csv_path)
-    sample_file = df['final_file'].iloc[0]
-    
-    if sample_file.endswith('.h5'):
-        from data.dataset import AlzheimerDatasetHDF5 as Dataset
-    else:
-        from data.dataset_original import AlzheimerDataset as Dataset
-    
-    # Create dataset (assumes all data is marked as 'test' split)
-    dataset = Dataset(
-        split_csv_path=split_csv_path,
-        split='test',
-        transform=transform,
-        base_dir=base_dir,
-        resize=resize,
-        resize_method=resize_method
-    )
-    
-    # Create dataloader
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory
-    )
-    
-    return dataloader
+    col = cohort_column(df)
+    if col is None:
+        return {}
+    return {c: i for i, c in enumerate(sorted(df.loc[df['split'] == 'train', col].astype(str).unique()))}
+
+
+def eval_splits(split_csv_path):
+    """Every split other than train/val (e.g. 'test', 'external'), in a stable order."""
+    splits = pd.read_csv(split_csv_path)['split'].astype(str).unique().tolist()
+    return sorted(s for s in splits if s not in ('train', 'val'))
+
+
+def set_seed(seed, deterministic=False):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = not deterministic
+    torch.backends.cudnn.deterministic = deterministic
+
+
+def _worker_init(worker_id):
+    seed = torch.initial_seed() % 2**32
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def create_data_loaders(split_csv_path, batch_size=8, num_workers=4, transforms=None, base_dir=None,
+                        use_balanced_sampler=True, pin_memory=True, resize=None, resize_method='trilinear',
+                        seed=None, domain_map=None, eval_batch_size=None):
+    """Loaders for 'train', 'val' and every other split value in the CSV (see eval_splits)."""
+    transforms = transforms or {}
+    Dataset_ = _dataset_class(split_csv_path)
+    if domain_map is None:
+        domain_map = build_domain_map(split_csv_path)
+
+    names = ['train', 'val'] + eval_splits(split_csv_path)
+    datasets = {
+        s: Dataset_(split_csv_path, split=s, transform=transforms.get(s) if s == 'train' else None,
+                    base_dir=base_dir, resize=resize, resize_method=resize_method, domain_map=domain_map)
+        for s in names
+    }
+    for s in ('train', 'val'):
+        if len(datasets[s]) == 0:
+            raise ValueError(f"Split '{s}' is empty in {split_csv_path}")
+
+    generator = torch.Generator().manual_seed(seed) if seed is not None else None
+    sampler = datasets['train'].get_sampler(generator) if use_balanced_sampler else None
+
+    common = dict(num_workers=num_workers, pin_memory=pin_memory, worker_init_fn=_worker_init)
+    loaders = {
+        'train': DataLoader(datasets['train'], batch_size=batch_size, shuffle=sampler is None,
+                            sampler=sampler, generator=generator, **common),
+    }
+    for s in names[1:]:
+        loaders[s] = DataLoader(datasets[s], batch_size=eval_batch_size or batch_size, shuffle=False, **common)
+    return loaders
+
+
+def create_evaluation_dataloader(split_csv_path, batch_size=4, transform=None, base_dir=None,
+                                 num_workers=4, pin_memory=True, resize=None, resize_method='trilinear',
+                                 split='test', domain_map=None):
+    Dataset_ = _dataset_class(split_csv_path)
+    dataset = Dataset_(split_csv_path, split=split, transform=transform, base_dir=base_dir,
+                       resize=resize, resize_method=resize_method, domain_map=domain_map)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False,
+                      num_workers=num_workers, pin_memory=pin_memory)

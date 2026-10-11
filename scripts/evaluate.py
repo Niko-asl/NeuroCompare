@@ -33,6 +33,9 @@ from models.hybrid_factory import create_hybrid_model
 from models.minit_factory import create_minit_model_factory
 from models.densenet_3d import create_densenet_model
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from data.dataset import unpack_batch
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate trained models on external dataset with auto-detection")
     
@@ -251,9 +254,12 @@ def evaluate_model(model, dataloader, device):
     all_predictions = []
     all_probabilities = []
     all_labels = []
+    all_indices = []
     
     with torch.no_grad():
-        for batch_idx, (inputs, labels) in enumerate(tqdm(dataloader, desc="Evaluating")):
+        for batch_idx, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
+            inputs, labels, _, idx = unpack_batch(batch)
+            all_indices.extend(idx.tolist() if hasattr(idx, 'tolist') else list(idx))
             inputs = inputs.to(device)
             labels = labels.to(device)
             
@@ -269,6 +275,7 @@ def evaluate_model(model, dataloader, device):
             all_probabilities.extend(probabilities[:, 1].cpu().numpy())  # Probability of AD class
             all_labels.extend(labels.cpu().numpy())
     
+    dataloader.last_indices = np.array(all_indices)
     return np.array(all_predictions), np.array(all_probabilities), np.array(all_labels)
 
 def calculate_metrics(y_true, y_pred, y_prob):
@@ -407,7 +414,7 @@ def main():
         logger.info("Creating data loader for external test data...")
         
         # Create a single dataset and dataloader for test data only
-        from data.dataset_original import AlzheimerDataset
+        from data.dataset import AlzheimerDataset
         from torch.utils.data import DataLoader
         
         test_dataset = AlzheimerDataset(
@@ -495,7 +502,11 @@ def main():
         
         # Save predictions if requested
         if args.save_predictions:
+            id_df = test_dataset.df.iloc[external_loader.last_indices]
+            id_cols = [c for c in ('subject_id', 'cohort', 'dataset', 'Dataset', 'scan_id', 'final_file', 'source')
+                       if c in id_df.columns]
             predictions_df = pd.DataFrame({
+                **{c: id_df[c].values for c in id_cols},
                 'true_label': labels,
                 'predicted_label': predictions,
                 'predicted_probability': probabilities,

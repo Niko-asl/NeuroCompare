@@ -211,6 +211,14 @@ def config_to_args(config):
         'hardware_world_size': 'world_size',
         'hardware_dist_url': 'dist_url',
         
+        # Reproducibility / domain-adversarial training
+        'training_seed': 'seed',
+        'training_deterministic': 'deterministic',
+        'dann_enabled': 'dann',
+        'dann_weight': 'dann_weight',
+        'dann_conditional': 'dann_conditional',
+        'dann_hidden': 'dann_hidden',
+        
         # Experiment metadata
         'experiment_name': 'exp_name',
     }
@@ -325,6 +333,12 @@ def parse_args(args=None):
         'decision_margin': 0.0,
         'save_predictions': False,
         'export_features': False,
+        'seed': 42,
+        'deterministic': False,
+        'dann': False,
+        'dann_weight': 1.0,
+        'dann_conditional': False,
+        'dann_hidden': 256,
         'test_time_augmentation': False,
         'tta_samples': 5,
         'rotation_angle': 10,
@@ -628,6 +642,22 @@ def add_training_arguments(parser):
                             help='Enable gradient monitoring during training')
     train_group.add_argument('--track_parameters', action='store_true',
                             help='Track model parameters during training')
+    train_group.add_argument('--seed', type=int, default=42,
+                            help='Seed for weight init, augmentation and sampling')
+    train_group.add_argument('--deterministic', action='store_true',
+                            help='Deterministic cuDNN kernels (slower for 3D convolutions)')
+    
+    dann_group = parser.add_argument_group('Cohort-adversarial training (DANN)')
+    dann_group.add_argument('--dann', action='store_true',
+                            help='Add a gradient-reversal cohort classifier on the penultimate features '
+                                 '(cnn, densenet, vit, hybrid). Cohorts come from the training split.')
+    dann_group.add_argument('--dann_weight', type=float, default=1.0,
+                            help='Maximum gradient-reversal weight (ramped from 0 over training)')
+    dann_group.add_argument('--dann_conditional', action='store_true',
+                            help='One cohort classifier per diagnostic class, so cohort information is '
+                                 'removed within AD and within controls rather than across them')
+    dann_group.add_argument('--dann_hidden', type=int, default=256,
+                            help='Hidden width of the cohort classifier')
 
 def add_augmentation_arguments(parser):
     """Add data augmentation arguments."""
@@ -735,7 +765,7 @@ def add_evaluation_arguments(parser):
     eval_group.add_argument('--save_predictions', action='store_true',
                           help='Save individual predictions for analysis')
     eval_group.add_argument('--export_features', action='store_true',
-                          help='Export extracted features for visualization')
+                          help='Save penultimate features (.npy, row-aligned with the predictions CSVs) for every split')
     eval_group.add_argument('--test_time_augmentation', action='store_true',
                           help='Use test-time augmentation')
     eval_group.add_argument('--tta_samples', type=int, default=5,
