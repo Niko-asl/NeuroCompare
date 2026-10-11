@@ -1,5 +1,11 @@
 # A little secondary evaluation script thats decoupled from the eval done after training
 
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from data.dataset import unpack_batch
+
 def evaluate_model(model_path, data_csv, base_dir=None, device='cuda:0', margin=0.0, batch_size=4):
     import os
     import torch
@@ -55,7 +61,7 @@ def evaluate_model(model_path, data_csv, base_dir=None, device='cuda:0', margin=
     
 
     test_dataloader = dataloaders['test']
-    sample_inputs, _ = next(iter(test_dataloader))
+    sample_inputs = unpack_batch(next(iter(test_dataloader)))[0]
     input_shape = sample_inputs.shape[2:]  # D, H, W (excluding batch and channel dims)
     
     # Import the model classes
@@ -95,7 +101,8 @@ def evaluate_model(model_path, data_csv, base_dir=None, device='cuda:0', margin=
     all_probs = []
     
     with torch.no_grad():
-        for inputs, labels in test_dataloader:
+        for batch in test_dataloader:
+            inputs, labels, _, _ = unpack_batch(batch)
             inputs = inputs.to(device)
             
             outputs = model(inputs)

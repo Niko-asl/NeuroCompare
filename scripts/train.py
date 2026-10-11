@@ -17,14 +17,16 @@ from sklearn.metrics import confusion_matrix, roc_auc_score, accuracy_score, roc
 from utils.cli import parse_args
 from utils.losses import LossFactory
 from utils.model_utils import track_parameters, check_output_values
-from data.dataset import create_data_loaders
+from data.dataset import (create_data_loaders, create_evaluation_dataloader, unpack_batch,
+                          set_seed, build_domain_map, cohort_column)
+from models.domain_adversarial import FeatureHook, CohortAdversary, ganin_lambda, HEAD_ATTR
 from data.augmentation import MRIAugmentation
 from models.cnn_factory import create_cnn_model
 from models.vision_transformer import VisionTransformer3D
 from models.hybrid_model import HybridCNNTransformer
 from models.minit_factory import create_minit_model_factory, print_model_info, validate_configuration
 
-def train_epoch(model, dataloader, criterion, optimizer, device, args):
+def train_epoch(model, dataloader, criterion, optimizer, device, args, hook=None, adversary=None, epoch=0):
     """
     Train for one epoch with optional explicit L2 regularization.
     
@@ -44,9 +46,13 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
         Command-line arguments
     """
     model.train()
+    if adversary is not None:
+        adversary.train()
     running_loss = 0.0
     correct = 0
     total = 0
+    dom_loss_sum, dom_correct, dom_n, lam = 0.0, 0, 0, 0.0
+    n_batches = len(dataloader)
     
     all_labels = []
     all_preds = []
@@ -55,8 +61,9 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
     
     progress_bar = tqdm(dataloader, desc='Training', leave=False)
     
-    for inputs, labels in progress_bar:
-        inputs, labels = inputs.to(device), labels.to(device)
+    for step, batch in enumerate(progress_bar):
+        inputs, labels, domains, _ = unpack_batch(batch)
+        inputs, labels, domains = inputs.to(device), labels.to(device), domains.to(device)
         
         optimizer.zero_grad()
         
@@ -64,13 +71,16 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
         
         loss = criterion(outputs, labels)
         
+        # Weight decay is applied once, by the optimizer (an extra explicit L2 term used to be added here too).
         
-        # Weight decay if specified in command
-        if args.weight_decay > 0:
-            l2_reg = 0.0
-            for param in model.parameters():
-                l2_reg += torch.norm(param, 2)
-            loss += args.weight_decay * l2_reg
+        # Cohort-adversarial term: gradient reversal makes the backbone remove cohort information
+        if adversary is not None:
+            lam = ganin_lambda((epoch + step / n_batches) / args.epochs, args.dann_weight)
+            d_loss, d_correct, d_used = adversary(hook.features, labels, domains, lam)
+            loss = loss + d_loss
+            dom_loss_sum += d_loss.item() * d_used
+            dom_correct += d_correct
+            dom_n += d_used
         
         loss.backward()
         
@@ -102,7 +112,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
         
         # Statistics
         running_loss += loss.item() * inputs.size(0)
-        _, predicted = outputs.max(1)
+        _, predicted = outputs.detach().max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
         
@@ -124,7 +134,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
     logging.info(f"Training class distribution - Predictions: {np.bincount(all_preds)}")
     
     # Calculate confusion matrix
-    cm = confusion_matrix(all_labels, all_preds)
+    cm = confusion_matrix(all_labels, all_preds, labels=[0, 1])
     logging.info(f"Training Confusion Matrix:\n{cm}")
     
     # Calculate balanced accuracy
@@ -135,7 +145,13 @@ def train_epoch(model, dataloader, criterion, optimizer, device, args):
     
     logging.info(f"Training Balanced Accuracy: {balanced_acc * 100:.2f}%")
     
-    return epoch_loss, epoch_acc
+    dom_stats = {}
+    if adversary is not None and dom_n:
+        dom_stats = {'domain_loss': dom_loss_sum / dom_n, 'domain_acc': 100. * dom_correct / dom_n, 'lambda': lam}
+        logging.info(f"Cohort adversary: loss {dom_stats['domain_loss']:.4f}, "
+                     f"train cohort acc {dom_stats['domain_acc']:.2f}%, lambda {lam:.3f}")
+    
+    return epoch_loss, epoch_acc, dom_stats
 
 
 def validate_with_margin(model, dataloader, criterion, device, margin=0.0):
@@ -146,7 +162,8 @@ def validate_with_margin(model, dataloader, criterion, device, margin=0.0):
     all_probs = []
     
     with torch.no_grad():
-        for inputs, labels in tqdm(dataloader, desc='Validation', leave=False):
+        for batch in tqdm(dataloader, desc='Validation', leave=False):
+            inputs, labels, _, _ = unpack_batch(batch)
             inputs, labels = inputs.to(device), labels.to(device)
             
             outputs = model(inputs)
@@ -296,7 +313,8 @@ def generate_confusion_matrix(model, dataloader, device, output_dir, model_name)
     y_probs = []
     
     with torch.no_grad():
-        for inputs, labels in dataloader:
+        for batch in dataloader:
+            inputs, labels, _, _ = unpack_batch(batch)
             inputs = inputs.to(device)
             outputs = model(inputs)
             probs = torch.softmax(outputs, dim=1)
@@ -310,7 +328,7 @@ def generate_confusion_matrix(model, dataloader, device, output_dir, model_name)
     y_pred = np.array(y_pred)
     y_probs = np.array(y_probs)
     
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     
     tn, fp, fn, tp = cm.ravel()
     accuracy = 100 * (tp + tn) / (tp + tn + fp + fn)
@@ -391,6 +409,46 @@ def generate_confusion_matrix(model, dataloader, device, output_dir, model_name)
     }
 
 
+ID_COLUMNS = ('subject_id', 'cohort', 'dataset', 'Dataset', 'scan_id', 'final_file', 'source')
+
+
+def predict(model, dataloader, device, hook=None):
+    """Per-scan predictions joined to subject/cohort/scan IDs, plus penultimate features if hooked."""
+    model.eval()
+    probs, labels, idxs, feats = [], [], [], []
+    with torch.no_grad():
+        for batch in dataloader:
+            inputs, y, _, idx = unpack_batch(batch)
+            outputs = model(inputs.to(device))
+            probs.append(torch.softmax(outputs, dim=1)[:, 1].cpu())
+            labels.append(torch.as_tensor(y))
+            idxs.append(torch.as_tensor(idx))
+            if hook is not None:
+                feats.append(hook.features.detach().float().cpu())
+    probs, labels, idxs = torch.cat(probs).numpy(), torch.cat(labels).numpy(), torch.cat(idxs).numpy()
+    df = dataloader.dataset.df.iloc[idxs]
+    table = df[[c for c in ID_COLUMNS if c in df.columns]].reset_index(drop=True)
+    table['label'] = labels
+    table['prob_ad'] = probs
+    table['pred'] = (probs > 0.5).astype(int)
+    return table, (torch.cat(feats).numpy() if feats else None)
+
+
+def summary_metrics(table):
+    y, p, yhat = table['label'].values, table['prob_ad'].values, table['pred'].values
+    cm = confusion_matrix(y, yhat, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+    sens = tp / (tp + fn) if (tp + fn) else 0.0
+    spec = tn / (tn + fp) if (tn + fp) else 0.0
+    try:
+        auc = float(roc_auc_score(y, p))
+    except ValueError:
+        auc = float('nan')
+    return {'n': int(len(y)), 'auc': auc, 'balanced_acc': 100 * (sens + spec) / 2,
+            'sensitivity': sens, 'specificity': spec,
+            'confusion_matrix': {'tn': int(tn), 'fp': int(fp), 'fn': int(fn), 'tp': int(tp)}}
+
+
 def main():
  
     # Numpy has a scope issue
@@ -400,6 +458,7 @@ def main():
     # parse_args does not have a scope issue
     args = parse_args()
     # Make. It. Make. Sense.
+    set_seed(args.seed, args.deterministic)
     
  
     os.makedirs(args.exp_dir, exist_ok=True)
@@ -414,7 +473,7 @@ def main():
         ]
     )
     logger = logging.getLogger(__name__)
-    logger.info(f'Starting training for {args.model} model')
+    logger.info(f'Starting training for {args.model} model (seed {args.seed})')
     logger.info(f'Experiment: {args.exp_name}')
     
     dropout_rate = args.cnn_dropout if args.model == 'cnn' else args.vit_dropout if args.model == 'vit' else args.hybrid_dropout
@@ -486,7 +545,10 @@ def main():
             num_workers=args.num_workers,
             pin_memory=args.pin_memory,
             resize = args.resize,
-            resize_method = args.resize_method
+            resize_method = args.resize_method,
+            seed = args.seed,
+            domain_map = build_domain_map(args.data),
+            eval_batch_size = args.eval_batch_size
         )
     except FileNotFoundError as e:
         logger.error(f"Error loading dataset: {e}")
@@ -496,8 +558,10 @@ def main():
     
     train_df = pd.read_csv(args.data)
     train_df = train_df[train_df['split'] == 'train']
-    train_labels = [1 if row['group'] == 'AD' else 0 for _, row in train_df.iterrows()]
-    class_counts = np.bincount(train_labels)
+    train_labels = np.array([1 if g == 'AD' else 0 for g in train_df['group']])
+    class_counts = np.bincount(train_labels, minlength=2)
+    domain_map = build_domain_map(args.data)
+    logger.info(f"Training cohorts (domain ids): {domain_map}")
     logger.info(f"Training set class distribution: {class_counts} (gang gang)")    
     
     # Calculate class weights for balanced loss if requested
@@ -655,6 +719,30 @@ def main():
     model = model.to(device)
     logger.info(f'Created {args.model} model')
     
+    # Penultimate features: needed for the cohort adversary and for --export_features
+    hook = None
+    if args.dann or args.export_features:
+        if args.model in HEAD_ATTR:
+            hook = FeatureHook(model, args.model)
+        elif args.dann:
+            raise ValueError(f"--dann is not supported for '{args.model}' (no single penultimate feature vector)")
+        else:
+            logger.warning(f"--export_features is not supported for '{args.model}'; skipping feature export")
+    
+    adversary = None
+    if args.dann:
+        train_ds = dataloaders['train'].dataset
+        counts = torch.zeros(2, len(domain_map))
+        for y, d in zip(train_ds.labels, train_ds.domains):
+            if d >= 0:
+                counts[y, d] += 1
+        adversary = CohortAdversary(hook.dim, len(domain_map), hidden=args.dann_hidden,
+                                    conditional=args.dann_conditional, class_domain_counts=counts).to(device)
+        logger.info(f"Cohort adversary on {hook.dim}-d features, {len(domain_map)} cohorts, "
+                    f"{'class-conditional' if args.dann_conditional else 'unconditional'}, "
+                    f"max lambda {args.dann_weight}. Train scans per class x cohort:\n{counts.int().tolist()}")
+    adv_params = list(adversary.parameters()) if adversary is not None else []
+    
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -676,6 +764,7 @@ def main():
             optimizer_params = model.parameters()
     else:
         optimizer_params = model.parameters()
+    optimizer_params = list(optimizer_params) + adv_params
     
     # loss function based on command line args
     loss_kwargs = {}
@@ -687,6 +776,9 @@ def main():
         
         loss_kwargs['class_counts'] = class_counts
         loss_kwargs['device'] = device
+        if args.loss == 'bce_logits' and args.class_weights:
+            # bce_with_logits only reads pos_weight; class counts alone were silently ignored
+            loss_kwargs['pos_weight'] = torch.tensor([class_counts[0] / class_counts[1]], device=device)
         
         # Look if you've read this far you get the point
         # Everything is controlled via command line flags
@@ -805,7 +897,8 @@ def main():
         'val_precision': [],
         'val_recall': [],
         'val_f1': [],
-        'val_specificity': []
+        'val_specificity': [],
+        'train_domain_acc': []
     }
     
     for epoch in range(args.epochs):
@@ -827,19 +920,19 @@ def main():
            # Update optimizer to include all parameters
            if args.optimizer == 'adam':
                optimizer = torch.optim.Adam(
-                   model.parameters(), 
+                   list(model.parameters()) + adv_params, 
                    lr=args.lr * 0.1,  # Lower learning rate after unfreezing
                    weight_decay=args.weight_decay
                )
            elif args.optimizer == 'adamw':
                optimizer = torch.optim.AdamW(
-                   model.parameters(), 
+                   list(model.parameters()) + adv_params, 
                    lr=args.lr * 0.1,
                    weight_decay=args.weight_decay
                )
            elif args.optimizer == 'sgd':
                optimizer = torch.optim.SGD(
-                   model.parameters(),
+                   list(model.parameters()) + adv_params,
                    lr=args.lr * 0.1,
                    momentum=0.9,
                    weight_decay=args.weight_decay
@@ -850,9 +943,11 @@ def main():
            logger.info(f"Now training all {trainable_params:,} parameters")
        
         # Train one epoch
-        train_loss, train_acc = train_epoch(
-            model, dataloaders['train'], criterion, optimizer, device, args
+        train_loss, train_acc, dom_stats = train_epoch(
+            model, dataloaders['train'], criterion, optimizer, device, args,
+            hook=hook, adversary=adversary, epoch=epoch
         )
+        history['train_domain_acc'].append(dom_stats.get('domain_acc'))
         logger.info(f'Train Loss: {train_loss:.4f}, Acc: {train_acc:.2f}%')
         
         # Validate with margin
@@ -910,6 +1005,8 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
                 'metrics': val_metrics,
                 'args': args,
+                'domain_map': domain_map,
+                'adversary_state_dict': adversary.state_dict() if adversary is not None else None,
             }, model_path)
             logger.info(f'Saved best model with {args.monitor}: {current_val_metric:.4f}')
             
@@ -975,43 +1072,54 @@ def main():
     if grad_monitor is not None:
         grad_monitor.close()
     
-    # Evaluate on test set
-    logger.info('Evaluating on test set...')
-    test_metrics = validate_with_margin(model, dataloaders['test'], criterion, device, margin=args.margin)
+    # Evaluate on val and every held-out split (test, external, ...), saving per-scan predictions
+    # with subject / cohort / scan IDs so errors can be compared across models.
+    split_metrics = {}
+    for split, loader in dataloaders.items():
+        if split == 'train':
+            continue
+        table, feats = predict(model, loader, device, hook if args.export_features else None)
+        table.insert(0, 'split', split)
+        table.to_csv(os.path.join(args.exp_dir, f'{args.model}_{split}_predictions.csv'), index=False)
+        if feats is not None:
+            np.save(os.path.join(args.exp_dir, f'{args.model}_{split}_features.npy'), feats)
+        split_metrics[split] = summary_metrics(table)
+        m = split_metrics[split]
+        logger.info(f"{split}: n={m['n']}, AUC {m['auc']:.4f}, balanced acc {m['balanced_acc']:.2f}%")
+        if split != 'val':
+            generate_confusion_matrix(model, loader, device, args.exp_dir, f'{args.model}_{split}')
     
-    # Log test metrics
-    logger.info(f"Test Loss: {test_metrics['loss']:.4f}, "
-               f"Acc: {test_metrics['accuracy']:.2f}%, "
-               f"Balanced Acc: {test_metrics['balanced_acc']:.2f}%, "
-               f"AUC: {test_metrics['auc']:.4f}, "
-               f"F1: {test_metrics['f1']:.4f}, "
-               f"Recall: {test_metrics['recall']:.4f}, "
-               f"Precision: {test_metrics['precision']:.4f}")
+    if args.export_features and hook is not None:
+        # Unaugmented, unshuffled pass over the training split, e.g. for cohort decodability checks
+        train_eval = create_evaluation_dataloader(
+            args.data, batch_size=args.eval_batch_size, base_dir=args.base_dir, num_workers=args.num_workers,
+            resize=args.resize, resize_method=args.resize_method, split='train', domain_map=domain_map)
+        table, feats = predict(model, train_eval, device, hook)
+        table.insert(0, 'split', 'train')
+        table.to_csv(os.path.join(args.exp_dir, f'{args.model}_train_predictions.csv'), index=False)
+        np.save(os.path.join(args.exp_dir, f'{args.model}_train_features.npy'), feats)
     
-    # Generate confusion matrix and complete evaluation report
-    eval_metrics = generate_confusion_matrix(model, dataloaders['test'], device, args.exp_dir, args.model)
-    
-    # Save final results to a JSON file
-    # This used to be a text file but JSON is just so much nicer
     import json
     results_file = os.path.join(args.exp_dir, f'{args.model}_final_results.json')
     with open(results_file, 'w') as f:
         results = {
-            'test_metrics': {k: float(v) if isinstance(v, (np.float32, np.float64)) else v 
-                         for k, v in test_metrics.items() if k != 'confusion_matrix'},
+            'split_metrics': split_metrics,
+            'test_metrics': split_metrics.get('test', {}),
             'best_validation': {
                 'epoch': best_epoch + 1,
                 'metric': args.monitor,
                 'value': float(best_val_metric),
             },
+            'domain_map': domain_map,
+            'history': history,
             'training_config': vars(args)
         }
-        json.dump(results, f, indent=2)
+        json.dump(results, f, indent=2, default=str)
     
     logger.info('Training and evaluation complete!')
     logger.info(f'Results saved to {args.exp_dir}')
     
-    return eval_metrics
+    return split_metrics
 # I drank so much redbull I could win a race vs a horse
 if __name__ == '__main__':
     main()                      

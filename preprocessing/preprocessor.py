@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 
 class StreamlinedAlzheimerPreprocessor:
     
-    def __init__(self, ad_dir, control_dir, output_dir):
+    def __init__(self, ad_dir=None, control_dir=None, output_dir='preprocessed', cohort=None):
         self.ad_dir = ad_dir
         self.control_dir = control_dir
         self.output_dir = output_dir
+        self.cohort = cohort
         
         # Only create final output directory
         os.makedirs(os.path.join(output_dir, "final_processed"), exist_ok=True)
@@ -112,6 +113,12 @@ class StreamlinedAlzheimerPreprocessor:
         control_subjects = process_directory(self.control_dir, "Control")
         all_subjects = ad_subjects + control_subjects
         self.metadata = pd.DataFrame(all_subjects)
+        self.metadata['cohort'] = self.cohort if self.cohort else 'all'
+        if (self.metadata['subject_id'] == '.').any():
+            raise ValueError(
+                "Some scans sit directly in the AD/Control folder, so no subject ID can be read from the path. "
+                "Use --manifest with an explicit subject column instead."
+            )
         
         logger.info(f"Found {len(ad_subjects)} AD scans and {len(control_subjects)} Control scans")
         logger.info(f"DICOM files: {len(self.metadata[self.metadata['file_type'] == 'DICOM'])}")
@@ -121,6 +128,38 @@ class StreamlinedAlzheimerPreprocessor:
         self.metadata.to_csv(os.path.join(self.output_dir, "metadata.csv"), index=False)
         return self.metadata
     
+    def load_manifest(self, manifest_csv, path_col='path', subject_col='subject_id', label_col='group',
+                      cohort_col='cohort', scan_col=None, ad_values=('AD', '1'), cn_values=('Control', 'CN', '0')):
+        """Build the scan table from a manifest instead of folder structure.
+        Rows whose label is neither AD nor CN (e.g. FTD) are skipped."""
+        m = pd.read_csv(manifest_csv)
+        for c in (path_col, subject_col, label_col):
+            if c not in m.columns:
+                raise ValueError(f"Manifest has no column '{c}' (columns: {list(m.columns)})")
+        lab = m[label_col].astype(str)
+        group = np.where(lab.isin(ad_values), 'AD', np.where(lab.isin(cn_values), 'Control', None))
+        if (group == None).any():  # noqa: E711
+            logger.info(f"Skipping {(group == None).sum()} rows with labels outside AD/CN: "  # noqa: E711
+                        f"{sorted(lab[group == None].unique())}")  # noqa: E711
+        cohort = m[cohort_col].astype(str) if cohort_col and cohort_col in m.columns else (self.cohort or 'all')
+        meta = pd.DataFrame({
+            'subject_id': m[subject_col].astype(str),
+            'scan_type': 'manifest',
+            'scan_date': 'Unknown',
+            'series_folder': 'NIfTI',
+            'dicom_path': m[path_col].astype(str),
+            'group': group,
+            'file_type': ['DICOM' if os.path.isdir(p) else 'NIfTI' for p in m[path_col].astype(str)],
+            'cohort': cohort,
+            'scan_id': m[scan_col].astype(str) if scan_col else
+                       [os.path.basename(p).split('.nii')[0] for p in m[path_col].astype(str)],
+        })
+        self.metadata = meta[meta['group'].notna()].reset_index(drop=True)
+        logger.info(f"Manifest: {len(self.metadata)} scans, "
+                    f"{self.metadata.groupby(['cohort', 'group']).size().to_dict()}")
+        self.metadata.to_csv(os.path.join(self.output_dir, "metadata.csv"), index=False)
+        return self.metadata
+
     # Replace the process_single_subject_streamlined method in preprocessing/preprocessor.py
 
     def process_single_subject_streamlined(self, row):
@@ -129,17 +168,20 @@ class StreamlinedAlzheimerPreprocessor:
         logger.info(f"Processing subject {subject_id}")
     
         # FIXED: More robust scan ID extraction that doesn't fail
-        scan_id = self._extract_scan_id_robust(row)
+        scan_id = row['scan_id'] if isinstance(row.get('scan_id'), str) and row.get('scan_id') else self._extract_scan_id_robust(row)
+        cohort = row.get('cohort', 'all')
     
-        # Check if final output already exists
-        final_filename = f"{subject_id}_{row['group']}_{scan_id}_processed.nii.gz"
-        final_output = os.path.join(self.output_dir, "final_processed", final_filename)
+        # Check if final output already exists (cohort-prefixed so IDs that repeat across cohorts never collide)
+        final_filename = f"{cohort}_{subject_id}_{row['group']}_{scan_id}_processed.nii.gz"
+        final_output = os.path.join(self.output_dir, "final_processed", str(cohort), final_filename)
     
         if os.path.exists(final_output):
             logger.info(f"Final processed file already exists for {subject_id} ({scan_id}), skipping entire pipeline")
             return {
                 'subject_id': subject_id,
                 'group': row['group'],
+                'cohort': cohort,
+                'source': row['dicom_path'],
                 'final_file': final_output,
                 'scan_type': row['scan_type'],
                 'file_type': row['file_type'],
@@ -153,13 +195,13 @@ class StreamlinedAlzheimerPreprocessor:
                 nifti_file = self.converter.convert(row)
                 if nifti_file is None:
                     logger.error(f"DICOM conversion failed for {subject_id}")
-                    return {'subject_id': subject_id, 'group': row['group'], 'error': 'DICOM conversion failed'}
+                    return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'DICOM conversion failed'}
                 logger.info(f"DICOM conversion successful for {subject_id}: {nifti_file}")
             else:  # NIfTI file
                 nifti_file = row['dicom_path']  # This is actually the NIfTI file path
                 if not os.path.exists(nifti_file):
                     logger.error(f"NIfTI file not found for {subject_id}: {nifti_file}")
-                    return {'subject_id': subject_id, 'group': row['group'], 'error': 'NIfTI file not found'}
+                    return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'NIfTI file not found'}
                 logger.info(f"Using existing NIfTI file for {subject_id}: {nifti_file}")
         
             # Step 2: Apply skull stripping with better error handling
@@ -168,22 +210,22 @@ class StreamlinedAlzheimerPreprocessor:
                 brain_file = self.brain_extractor.extract(nifti_file)
                 if brain_file is None:
                     logger.error(f"HD-BET returned None for {subject_id} - likely processing error")
-                    return {'subject_id': subject_id, 'group': row['group'], 'error': 'Skull stripping failed - HD-BET returned None'}
+                    return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'Skull stripping failed - HD-BET returned None'}
                 elif not os.path.exists(brain_file):
                     logger.error(f"HD-BET output file does not exist: {brain_file}")
-                    return {'subject_id': subject_id, 'group': row['group'], 'error': 'Skull stripping failed - output file missing'}
+                    return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'Skull stripping failed - output file missing'}
                 else:
                     logger.info(f"Skull stripping successful for {subject_id}: {brain_file}")
             except Exception as e:
                 logger.error(f"Exception during skull stripping for {subject_id}: {str(e)}")
-                return {'subject_id': subject_id, 'group': row['group'], 'error': f'Skull stripping exception: {str(e)}'}
+                return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': f'Skull stripping exception: {str(e)}'}
         
             # Step 3: Apply spatial normalization (creates temporary file)
             logger.info(f"Starting spatial normalization for {subject_id}")
             mni_file = self.spatial_normalizer.normalize(brain_file)
             if mni_file is None:
                 logger.error(f"Spatial normalization failed for {subject_id}")
-                return {'subject_id': subject_id, 'group': row['group'], 'error': 'Spatial normalization failed'}
+                return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'Spatial normalization failed'}
             logger.info(f"Spatial normalization successful for {subject_id}: {mni_file}")
         
             # Step 4: Apply intensity normalization (creates temporary file)
@@ -191,7 +233,7 @@ class StreamlinedAlzheimerPreprocessor:
             temp_norm_file = self.intensity_normalizer.normalize(mni_file)
             if temp_norm_file is None:
                 logger.error(f"Intensity normalization failed for {subject_id}")
-                return {'subject_id': subject_id, 'group': row['group'], 'error': 'Intensity normalization failed'}
+                return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'Intensity normalization failed'}
             logger.info(f"Intensity normalization successful for {subject_id}: {temp_norm_file}")
         
             logger.info(f"All processing steps completed for {subject_id}, temp file: {temp_norm_file}")
@@ -209,7 +251,7 @@ class StreamlinedAlzheimerPreprocessor:
                 logger.info(f"Successfully saved final processed file: {final_output}")
             else:
                 logger.error(f"Temp file does not exist: {temp_norm_file}")
-                return {'subject_id': subject_id, 'group': row['group'], 'error': 'Temp file missing for final copy'}
+                return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': 'Temp file missing for final copy'}
         
             # Clean up intermediate files immediately after processing this subject
             self._cleanup_subject_intermediates(subject_id)
@@ -217,6 +259,8 @@ class StreamlinedAlzheimerPreprocessor:
             return {
                 'subject_id': subject_id,
                 'group': row['group'],
+                'cohort': cohort,
+                'source': row['dicom_path'],
                 'final_file': final_output,
                 'scan_type': row['scan_type'],
                 'file_type': row['file_type'],
@@ -225,7 +269,7 @@ class StreamlinedAlzheimerPreprocessor:
         
         except Exception as e:
             logger.error(f"Error processing subject {subject_id}: {str(e)}")
-            return {'subject_id': subject_id, 'group': row['group'], 'error': str(e)}
+            return {'subject_id': subject_id, 'group': row['group'], 'cohort': cohort, 'source': row['dicom_path'], 'error': str(e)}
 
     def _extract_scan_id_robust(self, row):
         # Strategy 1: Look for ADNI-style scan IDs (original logic)
@@ -293,23 +337,28 @@ class StreamlinedAlzheimerPreprocessor:
         except Exception as e:
             logger.warning(f"Could not clean up intermediate files for {subject_id}: {str(e)}")
     
-    def run_streamlined_preprocessing_pipeline(self):
-        """Run the preprocessing pipeline without saving intermediate files"""
+    def run_streamlined_preprocessing_pipeline(self, shard_index=0, num_shards=1):
+        """Run the preprocessing pipeline without saving intermediate files.
+        With num_shards > 1, processes every num_shards-th scan (for SLURM arrays) and
+        writes preprocessing_results_shardXXX.csv; existing outputs are skipped, so reruns resume."""
         
         if not hasattr(self, 'metadata') or len(self.metadata) == 0:
             self.scan_directories()
         
         results = []
+        todo = self.metadata.iloc[shard_index::num_shards]
         
-        logger.info("Starting streamlined preprocessing pipeline...")
+        logger.info(f"Starting streamlined preprocessing pipeline on {len(todo)} scans "
+                    f"(shard {shard_index + 1}/{num_shards})...")
         
-        for idx, row in tqdm(self.metadata.iterrows(), desc="Processing subjects", total=len(self.metadata)):
+        for idx, row in tqdm(todo.iterrows(), desc="Processing subjects", total=len(todo)):
             result = self.process_single_subject_streamlined(row)
             results.append(result)
         
         # Save results
         results_df = pd.DataFrame(results)
-        results_df.to_csv(os.path.join(self.output_dir, "preprocessing_results.csv"), index=False)
+        name = "preprocessing_results.csv" if num_shards == 1 else f"preprocessing_results_shard{shard_index:03d}.csv"
+        results_df.to_csv(os.path.join(self.output_dir, name), index=False)
         
         logger.info("Streamlined preprocessing pipeline complete")
         
@@ -321,49 +370,21 @@ class StreamlinedAlzheimerPreprocessor:
         return results_df
     
     def create_dataset_splits(self, test_size=0.1, val_size=0.1, random_state=42):
-        """Create dataset splits using only final processed files"""
-        
+        """Subject-level random split across all cohorts. For leave-one-cohort-out or reused
+        benchmark splits, use scripts/make_splits.py instead."""
+        from data import splits as S
         results_path = os.path.join(self.output_dir, "preprocessing_results.csv")
         if not os.path.exists(results_path):
             logger.error("Cannot create splits: preprocessing_results.csv not found")
             return None
-            
-        results_df = pd.read_csv(results_path)
-        
-        # Filter valid results (those with final_file)
-        valid_results = results_df.dropna(subset=['final_file'])
-        
-        # Get unique subjects for splitting
-        subjects = valid_results[['subject_id', 'group']].drop_duplicates()
-        
-        # Split by subjects to avoid data leakage
-        train_val_subjects, test_subjects = train_test_split(
-            subjects, test_size=test_size, random_state=random_state, stratify=subjects['group']
-        )
-        
-        adjusted_val_size = val_size / (1 - test_size)
-        train_subjects, val_subjects = train_test_split(
-            train_val_subjects, test_size=adjusted_val_size, 
-            random_state=random_state, stratify=train_val_subjects['group']
-        )
-        
-        # Add split information
-        train_subjects['split'] = 'train'
-        val_subjects['split'] = 'val'
-        test_subjects['split'] = 'test'
-        
-        all_splits = pd.concat([train_subjects, val_subjects, test_subjects])
-        
-        # Merge with results
-        split_results = valid_results.merge(all_splits[['subject_id', 'split']], on='subject_id')
-        
-        # Save splits
-        split_results.to_csv(os.path.join(self.output_dir, "dataset_splits.csv"), index=False)
-        
-        # Log statistics
-        self._log_split_statistics(train_subjects, val_subjects, test_subjects, split_results)
-        
-        return split_results
+        df = pd.read_csv(results_path).dropna(subset=['final_file'])
+        if 'cohort' not in df.columns:
+            df['cohort'] = 'all'
+        df = S.check_label_consistency(df)
+        df = S.finalise(S.random_split(df, test_size, val_size, random_state))
+        df.to_csv(os.path.join(self.output_dir, "dataset_splits.csv"), index=False)
+        logger.info(f"Dataset splits:\n{S.summarise(df)}")
+        return df
     
     def _log_split_statistics(self, train_subjects, val_subjects, test_subjects, split_results):
         """Log detailed statistics about the dataset splits"""

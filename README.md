@@ -21,6 +21,43 @@ Public Release </br><br>
 - Added CNN hybridised MINiT/MIGiT/NiT models </br>
 - Added dataset preprocessing for external evaluation </br>
 - Added script for external evaluation </br>
+</br>
+11/10/26 </br>
+Fixes (runs before this date are affected): </br>
+- `cb_focal` and `bce_logits` losses were silently unweighted: class counts were computed on a Python list and came out as zero, and `bce_logits` ignored them </br>
+- Weight decay was applied twice (optimizer plus an explicit unsquared L2 term in the loss); now optimizer only </br>
+- Unreadable volumes were replaced by all-zero images with the true label; they now raise an error </br>
+- Training was unseeded; `--seed` (default 42) now controls initialisation, augmentation and sampling </br>
+- Splits merged on subject ID alone, so a subject with scans under both labels could land in two splits; splits are now keyed by (cohort, subject) and checked for label conflicts and leakage </br>
+- `scripts/preprocess_data.py` imported a class that no longer exists; it now forwards to `scripts/preprocess.py` </br>
+- `--margin` has no effect (predictions are always p > 0.5); left in place for config compatibility </br>
+</br>
+Additions: </br>
+- Manifest-driven preprocessing (`--manifest`, with subject / label / cohort columns) and sharding for SLURM arrays (`--num_shards`, shard taken from `$SLURM_ARRAY_TASK_ID`) </br>
+- `scripts/make_splits.py`: subject-level random splits, leave-one-cohort-out (`--holdout_cohort`, held-out cohort becomes split `external`), or reuse of existing split assignments (`--splits_from`) </br>
+- `train.py` evaluates val and every other split in the CSV (test, external, ...) and saves per-scan predictions with subject, cohort and scan IDs; `--export_features` saves row-aligned penultimate features for every split, including an unaugmented pass over train </br>
+- Cohort-adversarial training (`--dann`, `--dann_conditional`, `--dann_weight`) for cnn, densenet, vit and hybrid </br>
+- `scripts/cohort_decodability.py`: grouped-CV linear cohort probe on exported features, overall and within each class </br>
+
+<h2> Leave-one-cohort-out workflow </h2>
+
+```
+# 1. Preprocess from a manifest (one row per scan), sharded across a SLURM array
+python scripts/preprocess.py --manifest manifest.csv --path_col path --subject_col sub_id \
+    --label_col label --cohort_col Dataset --scan_col ses_id --output_dir prep --num_shards 50
+
+# 2. Hold out a cohort
+python scripts/make_splits.py --scans 'prep/preprocessing_results*.csv' --holdout_cohort AIBL --out splits_AIBL.csv
+
+# 3. Train with and without the cohort adversary, same seed
+python scripts/train.py --data splits_AIBL.csv --model cnn --seed 1 --export_features --exp_name cnn_AIBL_s1
+python scripts/train.py --data splits_AIBL.csv --model cnn --seed 1 --export_features --dann --dann_conditional --exp_name cnn_AIBL_dann_s1
+
+# 4. Check whether cohort information was actually removed (the in-training adversary accuracy is not evidence)
+python scripts/cohort_decodability.py --run_dir output/cnn_AIBL_dann_s1 --model cnn --splits train val test
+```
+
+With `--dann_conditional` there is one cohort classifier per diagnostic class, so the backbone removes cohort information within AD and within controls rather than anything that differs between cohorts with different AD prevalence or control definitions. MINiT-family models have no single penultimate feature vector and are not supported with `--dann`.
 
 
 <h2> End to end MRI analysis pipeline with 3 networks (currently) </h2> </br>
