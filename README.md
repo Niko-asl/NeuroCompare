@@ -38,13 +38,19 @@ Additions: </br>
 - `train.py` evaluates val and every other split in the CSV (test, external, ...) and saves per-scan predictions with subject, cohort and scan IDs; `--export_features` saves row-aligned penultimate features for every split, including an unaugmented pass over train </br>
 - Cohort-adversarial training (`--dann`, `--dann_conditional`, `--dann_weight`) for cnn, densenet, vit and hybrid </br>
 - `scripts/cohort_decodability.py`: grouped-CV linear cohort probe on exported features, overall and within each class </br>
+- `scripts/build_fm_manifest.py`: manifests restricted to the scans used in the foundation-model benchmark (first-scan and all-sessions), with per-cohort match and label-agreement counts </br>
 
 <h2> Leave-one-cohort-out workflow </h2>
 
 ```
+# 0. Manifests restricted to the foundation-model benchmark scans (present in every embedding file),
+#    first sessions only, plus an all-sessions manifest for the same subjects
+python scripts/build_fm_manifest.py --scans_root scans --embeddings 'emb/common_*.csv' \
+    --sessions sessions.csv --out manifests/fm        # see the script header for --strip / --subject_regex
+
 # 1. Preprocess from a manifest (one row per scan), sharded across a SLURM array
-python scripts/preprocess.py --manifest manifest.csv --path_col path --subject_col sub_id \
-    --label_col label --cohort_col Dataset --scan_col ses_id --output_dir prep --num_shards 50
+python scripts/preprocess.py --manifest manifests/fm_first_scan.csv --path_col path --subject_col sub_id \
+    --label_col label --cohort_col Dataset --scan_col scan_id --output_dir prep --num_shards 50
 
 # 2. Hold out a cohort
 python scripts/make_splits.py --scans 'prep/preprocessing_results*.csv' --holdout_cohort AIBL --out splits_AIBL.csv
