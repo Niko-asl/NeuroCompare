@@ -2,7 +2,8 @@
 Build preprocessing manifests restricted to the scans used in the foundation-model benchmark.
 
 Walks scans/<cohort>/<diagnosis>/**.nii[.gz], keeps the scans whose name matches the
-Image column of EVERY given embedding file (the FM-common set), and writes two manifests:
+Image column of every model (files of the same model, e.g. a main and a QMIN eval-only file,
+are combined first; see --model_regex), i.e. the FM-common set, and writes two manifests:
 
   <out>_first_scan.csv     FM-common scans that are first sessions (per --sessions)
   <out>_all_sessions.csv   every scan under scans/ belonging to the same subjects
@@ -44,6 +45,9 @@ def parse_args():
     p.add_argument('--image_col', default='Image', help='Scan identifier column in the embedding files')
     p.add_argument('--emb_label_col', default='label',
                    help='Label column in the embedding files (0=CN, 1=AD) for a cross-check; "" to skip')
+    p.add_argument('--model_regex', default=r'emb_([^_]+)_',
+                   help='Regex on file names whose group 1 is the model; files of the same model are '
+                        'combined (union) before intersecting across models')
     p.add_argument('--sessions', default=None, help='CSV listing first sessions; omit to skip that filter')
     p.add_argument('--sessions_cols', nargs='+', default=None,
                    help='Sessions column(s) identifying a scan (joined with "_"); default: auto-detect')
@@ -92,25 +96,45 @@ def walk_scans(root, strip):
     return pd.DataFrame(rows)
 
 
-def load_embedding_keys(paths, image_col, label_col, strip, scan_keys):
-    keysets, labels = [], {}
+def model_of(path, pattern):
+    m = re.search(pattern, os.path.basename(path))
+    return m.group(1) if m else os.path.basename(path)
+
+
+def load_embedding_keys(paths, image_col, label_col, strip, scan_keys, model_pattern):
+    """Union the files of each model (e.g. a main file plus a QMIN eval-only file),
+    then intersect across models."""
+    by_model, labels = {}, {}
     for path in paths:
         cols = pd.read_csv(path, nrows=0).columns
         if image_col not in cols:
             sys.exit(f"{path} has no '{image_col}' column (first columns: {list(cols[:8])})")
-        use = [image_col] + ([label_col] if label_col and label_col in cols else [])
+        ccol = next((c for c in ('Dataset', 'dataset', 'cohort') if c in cols), None)
+        use = [image_col] + ([label_col] if label_col and label_col in cols else []) + ([ccol] if ccol else [])
         df = pd.read_csv(path, usecols=use)
         keys = df[image_col].map(lambda x: make_key(x, strip))
-        keysets.append(set(keys))
-        if len(use) == 2:
+        model = model_of(path, model_pattern)
+        by_model.setdefault(model, set()).update(keys)
+        if label_col and label_col in cols:
             for k, l in zip(keys, df[label_col]):
                 labels.setdefault(k, set()).add(str(l).split('.')[0])
-        hit = len(set(keys) & scan_keys)
-        print(f"{os.path.basename(path)}: {len(df)} rows, {keys.nunique()} unique images, {hit} match a scan")
-        if hit == 0:
-            print(f"  e.g. Image {keys.iloc[0]!r} vs scan {next(iter(scan_keys))!r}; adjust --strip")
-    common = set.intersection(*keysets)
-    print(f"Images present in all {len(paths)} embedding files: {len(common)}")
+        hit = keys.isin(scan_keys)
+        print(f"[{model}] {os.path.basename(path)}: {len(df)} rows, {keys.nunique()} unique images, "
+              f"{hit.sum()} match a scan")
+        if (~hit).any():
+            miss = df.loc[~hit.values]
+            groups = miss.groupby(ccol) if ccol else [('all', miss)]
+            for cohort, g in groups:
+                ex = [str(v) for v in g[image_col].head(2)]
+                print(f"    {len(g)} unmatched in {cohort}, e.g. {ex}")
+    print(f"\nModels (files grouped by --model_regex {model_pattern!r}):")
+    for model, keys in by_model.items():
+        print(f"  {model}: {len(keys)} images, {len(keys & scan_keys)} match a scan")
+    common = set.intersection(*by_model.values())
+    print(f"Images present in all {len(by_model)} models: {len(common)} "
+          f"({len(common & scan_keys)} match a scan)")
+    if len(by_model) < 2:
+        print("Warning: only one model found; check --model_regex")
     return common, labels
 
 
@@ -167,12 +191,12 @@ def main():
         scans = scans[~scans['key'].isin(dup[dup].index)]
 
     common, emb_labels = load_embedding_keys(emb_paths, args.image_col, args.emb_label_col, args.strip,
-                                             set(scans['key']))
+                                             set(scans['key']), args.model_regex)
     scans['in_fm'] = scans['key'].isin(common)
     report['in_all_fm'] = scans[scans['in_fm']].groupby(['Dataset', 'label']).size()
     if not scans['in_fm'].any():
-        sys.exit("No scan matches the Image values of every embedding file; see the per-file counts above "
-                 "and adjust --strip so both sides reduce to the same name.")
+        sys.exit("No scan matches an image present in every model; see the unmatched examples above "
+                 "and adjust --strip (or --model_regex) so both sides reduce to the same name.")
     unmatched_fm = len(common - set(scans['key']))
     if unmatched_fm:
         print(f"Warning: {unmatched_fm} FM-common images have no file under {args.scans_root}")
