@@ -18,12 +18,12 @@
 #   MANIFEST=.../fm_first_scan.csv OUTPUT_DIR=.../nc_prep_first sbatch slurm/preprocess_array.sh
 # Set REPO=... to submit from anywhere else.
 #
-# Each task processes every N-th manifest row (N = array size) and writes
+# Task i processes rows i, i+N, i+2N, ... of the manifest (N = NSHARDS, default 50,
+# matching --array=0-49; change both together) and writes
 #   OUTPUT_DIR/final_processed/<cohort>/<cohort>_<sub>_<label>_<scan>_processed.nii.gz
 #   OUTPUT_DIR/preprocessing_results_shardXXX.csv
-# Finished scans are skipped, so failed or timed-out tasks can simply be resubmitted,
-# e.g. sbatch --array=7,12 slurm/preprocess_array.sh. Keep the array size the same
-# between submissions, or shards will be assigned different rows.
+# Finished scans are skipped, so a test task (sbatch --array=0 ...) followed by the rest
+# (--array=1-49), or resubmitting failed tasks (--array=7,12), all process the right rows.
 # After all tasks finish, build the splits:
 #   python scripts/make_splits.py --scans 'OUTPUT_DIR/preprocessing_results_shard*.csv' ...
 
@@ -49,7 +49,12 @@ MANIFEST="${MANIFEST:-/rds-d6/project/rds-nCu8GHKxWRw/niko_analysis/nc_manifests
 OUTPUT_DIR="${OUTPUT_DIR:-/rds-d6/project/rds-nCu8GHKxWRw/niko_analysis/nc_prep_first}"
 
 SHARD="${SLURM_ARRAY_TASK_ID:-0}"
-NSHARDS="${SLURM_ARRAY_TASK_COUNT:-1}"
+# Fixed shard count, independent of which tasks are submitted, so resubmitting
+# --array=7,12 or test-running --array=0 processes the same rows as the full run.
+NSHARDS="${NSHARDS:-50}"
+if (( SHARD >= NSHARDS )); then
+    echo "FATAL: array task $SHARD >= NSHARDS=$NSHARDS; keep --array within 0-$((NSHARDS - 1))" >&2; exit 1
+fi
 RUN_TAG="${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-manual}}_${SHARD}"
 WORK_DIR="${OUTPUT_DIR}/_logs/shard_$(printf '%03d' "$SHARD")"
 
