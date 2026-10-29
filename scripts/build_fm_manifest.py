@@ -202,7 +202,11 @@ def visit_order(values):
     """Sortable value per visit: dates if most values parse as dates, else visit codes
     (bl/sc/init = 0, mNN = NN months, otherwise the first number in the string)."""
     v = values.astype(str).str.strip()
-    dates = pd.to_datetime(v, errors='coerce', format='mixed', dayfirst=True)
+    # ISO (YYYY-MM-DD) first: with dayfirst=True, pandas reads 2010-03-02 as 3 February.
+    # Fall back to day-first only for non-ISO strings such as 05/01/2010.
+    dates = pd.to_datetime(v, errors='coerce', format='ISO8601')
+    if dates.notna().mean() <= 0.9:
+        dates = dates.fillna(pd.to_datetime(v, errors='coerce', format='mixed', dayfirst=True))
     if dates.notna().mean() > 0.9:
         return (dates - pd.Timestamp('1900-01-01')).dt.days.astype(float)
     def code(x):
