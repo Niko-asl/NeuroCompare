@@ -16,6 +16,9 @@ that subject's scans when the counts agree. Use --first_by to keep each subject'
 when the sessions CSV lists every visit. Columns in the sessions CSV are auto-detected (single columns, or two
 columns joined with '_', e.g. subject + image ID) unless given.
 
+Pass --exclude_from (or --exclude) when scans/ holds more than one version of the same scans,
+e.g. a cohort's plain copies used only for a separate evaluation.
+
 Example:
   python scripts/build_fm_manifest.py --scans_root scans \
       --embeddings emb/common_jepa.csv emb/common_vfm.csv emb/common_nsc.csv emb/common_iac.csv \
@@ -62,6 +65,12 @@ def parse_args():
                    help='Sessions column with subject IDs (otherwise taken from file names)')
     p.add_argument('--strip', nargs='*', default=[],
                    help='Regexes removed from both scan names and Image values before matching, e.g. "_t1w$" "_brain"')
+    p.add_argument('--exclude_from', nargs='*', default=[],
+                   help='CSV(s) whose Image values are removed from the scans/ tree before anything else, '
+                        'e.g. the QMIN plain eval-only embedding files, so an unused copy of each scan is '
+                        'neither matched nor counted as an extra visit; globs allowed')
+    p.add_argument('--exclude', nargs='*', default=[],
+                   help='Regexes on file paths under scans/ to ignore, e.g. "QMIN/.*_plain"')
     p.add_argument('--subject_regex', nargs='*', default=[],
                    help='Per-cohort subject-ID regex, e.g. AIBL="^(\\d+)_" (group 1 used if present)')
     p.add_argument('--out', required=True, help='Output prefix, e.g. manifests/fm')
@@ -232,6 +241,22 @@ def main():
         sys.exit(f"No embedding files match {args.embeddings}")
 
     scans = walk_scans(args.scans_root, args.strip)
+    drop = pd.Series(False, index=scans.index)
+    for pat in args.exclude:
+        hit = scans['path'].str.contains(pat, regex=True, case=False)
+        print(f"--exclude {pat!r}: {hit.sum()} files")
+        drop |= hit
+    ex_paths = sorted({f for pattern in args.exclude_from for f in glob.glob(pattern)})
+    if args.exclude_from and not ex_paths:
+        sys.exit(f"No files match --exclude_from {args.exclude_from}")
+    for path in ex_paths:
+        keys = set(pd.read_csv(path, usecols=[args.image_col])[args.image_col].map(lambda x: make_key(x, args.strip)))
+        hit = scans['key'].isin(keys)
+        print(f"--exclude_from {os.path.basename(path)}: {len(keys)} images, {hit.sum()} files excluded")
+        drop |= hit
+    if drop.any():
+        print(f"Excluded {drop.sum()} files; per cohort: {scans[drop].groupby('Dataset').size().to_dict()}")
+        scans = scans[~drop].reset_index(drop=True)
     report = scans.groupby(['Dataset', 'label']).size().rename('scans_found').to_frame()
 
     # Keys repeated across cohorts or labels cannot be matched to embeddings unambiguously
