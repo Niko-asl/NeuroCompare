@@ -106,7 +106,8 @@ def main():
         results = preprocessor.run_streamlined_preprocessing_pipeline(args.shard_index, args.num_shards)
         
         # Count successful processing
-        successful = len(results.dropna(subset=['final_file']))
+        # No 'final_file' column at all when every scan in the run failed
+        successful = int(results['final_file'].notna().sum()) if 'final_file' in results else 0
         failed = len(results) - successful
         logger.info(f"Processing complete: {successful} successful, {failed} failed")
         

@@ -48,6 +48,8 @@ def main():
         sys.exit(f"No files match {args.scans}")
     df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
     if 'error' in df.columns:
+        if 'final_file' not in df.columns:
+            sys.exit('No scan in these result files was preprocessed successfully')
         failed = df['final_file'].isna()
         if failed.any():
             print(f"Excluding {failed.sum()} scans that failed preprocessing")
